@@ -1,0 +1,23 @@
+{
+  "format": "hypit.runtime-local@1",
+  "dataRoot": ".hypit/execution",
+  "credentials": {
+    "platform": { "use": "@hypit/credential-store-platform" }
+  },
+  "endpoints": {
+    "comfyui.local": {
+      "use": "provider-comfyui",
+      "config": {
+        "baseUrl": "http://<comfyui-host>:8000",
+        "concurrency": 1,
+        "pollIntervalMs": 5000
+      }
+    }
+  },
+  "bindings": {
+    "@hypit/minimax-h3@1#minimax-h3": "comfyui.local",
+    "@local/h3-chain@1#h3-chain-take": "comfyui.local",
+    "@local/h3-retake@1#h3-retake": "comfyui.local",
+    "@local/h3-control@1#h3-control": "comfyui.local"
+  }
+}

@@ -1,0 +1,859 @@
+{
+ "115": {
+  "inputs": {
+   "aspect_ratio": "16:9 (Widescreen)",
+   "megapixels": 1.0,
+   "multiple": 32
+  },
+  "class_type": "ResolutionSelector",
+  "_meta": {
+   "title": "分辨率选择器"
+  }
+ },
+ "119": {
+  "inputs": {
+   "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "加载VAE"
+  }
+ },
+ "120": {
+  "inputs": {
+   "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+  },
+  "class_type": "VAELoader",
+  "_meta": {
+   "title": "加载VAE"
+  }
+ },
+ "127": {
+  "inputs": {
+   "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+   "weight_dtype": "default"
+  },
+  "class_type": "UNETLoader",
+  "_meta": {
+   "title": "UNet加载器"
+  }
+ },
+ "128": {
+  "inputs": {
+   "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "type": "minimax",
+   "device": "default"
+  },
+  "class_type": "CLIPLoader",
+  "_meta": {
+   "title": "加载CLIP"
+  }
+ },
+ "142": {
+  "inputs": {
+   "sampler_name": "euler"
+  },
+  "class_type": "KSamplerSelect",
+  "_meta": {
+   "title": "K采样器选择"
+  }
+ },
+ "145": {
+  "inputs": {
+   "lora_name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+   "strength_model": 1.0,
+   "model": [
+    "127",
+    0
+   ]
+  },
+  "class_type": "LoraLoaderModelOnly",
+  "_meta": {
+   "title": "LoRA加载器（仅模型）"
+  }
+ },
+ "153": {
+  "inputs": {
+   "tau": 1.3,
+   "start_percent": 0.2,
+   "end_percent": 0.9,
+   "min_tokens": 4096,
+   "int8_qk": true,
+   "sink_conditioning": "exact_kv_and_rows",
+   "morton": false,
+   "morton_curve": "2d_frame",
+   "int8_pv": true,
+   "verbose": false,
+   "use_tma": false,
+   "dense_blocks": "",
+   "model": [
+    "145",
+    0
+   ]
+  },
+  "class_type": "SolAttnPatch",
+  "_meta": {
+   "title": "Patch Sol-Attn"
+  }
+ },
+ "164": {
+  "inputs": {
+   "image": "VRChat_2026-05-06_23-40-35.210_3840x2160_wrld_79f5caa5-3c20-459c-bf6d-b08a5af6174d.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "加载图像"
+  }
+ },
+ "166": {
+  "inputs": {
+   "image": "VRChat_2026-05-06_23-40-42.991_3840x2160_wrld_79f5caa5-3c20-459c-bf6d-b08a5af6174d.png"
+  },
+  "class_type": "LoadImage",
+  "_meta": {
+   "title": "加载图像"
+  }
+ },
+ "149": {
+  "inputs": {
+   "upscale_method": "nearest-exact",
+   "megapixels": 1.0,
+   "resolution_steps": 32,
+   "image": [
+    "166",
+    0
+   ]
+  },
+  "class_type": "ImageScaleToTotalPixels",
+  "_meta": {
+   "title": "缩放图像（像素）"
+  }
+ },
+ "167": {
+  "inputs": {
+   "upscale_method": "nearest-exact",
+   "megapixels": 1.0,
+   "resolution_steps": 32,
+   "image": [
+    "164",
+    0
+   ]
+  },
+  "class_type": "ImageScaleToTotalPixels",
+  "_meta": {
+   "title": "缩放图像（像素）"
+  }
+ },
+ "101": {
+  "class_type": "PrimitiveFloat",
+  "inputs": {
+   "value": 8.0
+  }
+ },
+ "102": {
+  "class_type": "ComfyMathExpression",
+  "inputs": {
+   "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+   "values.a": [
+    "101",
+    0
+   ]
+  }
+ },
+ "103": {
+  "class_type": "MiniMaxH3ImageToVideo",
+  "inputs": {
+   "clip": [
+    "128",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "prompt": "Cinematic anime 3D short skit, part 1 of a 4-part continuous story, this part lasts about 8 seconds. Use the image where Aliya has a more half-lidded, skeptical and嫌弃 expression as the opening first frame, and use the image where Aliya is laughing with eyes closed as the ending last frame. Keep the overall visual style, character design, proportions, background, lighting, composition feeling, line softness, shading, and color palette perfectly consistent with the provided images. Absolutely preserve the same soft anime 3D look, the same pastel-like tones, the same indoor environment, the same bright daylight-blue window background, the same gentle soft lighting, and the same costume colors and details. No color shift, no style drift, no sudden texture change, no redesign, no lighting flicker, and no abrupt jump between frames. The animation must feel like one smooth continuous scene expanding naturally from the first frame to the last frame.\n\nCharacters: the girl on the left is MoePus. She has a slightly husky loli-like voice, calm, teasing, relaxed, and playful. The girl on the right is Aliya. She has a lively childlike voice, expressive, energetic, reactive, and emotionally obvious. Their personalities should be very clear in performance: MoePus is calm and likes to tease on purpose, Aliya is animated, outspoken,嫌弃大黄猫, and subtly protective of MoePus in a jealous but playful way.\n\nScene and performance: medium close-up two-shot throughout the whole sequence. Start from the first frame naturally. Camera uses a gentle slow dolly-in with very subtle handheld sway, very smooth and stable, no hard cuts. Characters must feel highly lively and vivid: frequent natural blinking, smooth eye tracking, tiny head tilts, subtle shoulder motion, delicate hand gestures, natural mouth movement, soft body sway, and expressive facial animation. Aliya especially must feel very animated and full of life, with clear changes in brows, mouth, cheeks, gaze, and posture. MoePus should feel softer and steadier, but still expressive and engaged. The acting tone should be playful and mutually teasing, like two close girls joking with each other.\n\nStory flow: At the beginning, Aliya notices something off-screen and immediately shows嫌弃. She glances toward the off-screen direction, then turns to MoePus with an annoyed disgusted expression and starts speaking, as if warning MoePus that the annoying big yellow cat is here again. MoePus stays relaxed and slightly amused. As the exchange continues, Aliya makes it clear that she dislikes the big yellow cat because he keeps trying to get close to MoePus. MoePus notices this and intentionally plays along, pretending to side with the big yellow cat just to make Aliya jealous. After an off-screen cat meow sound, MoePus deliberately says that maybe she should let the big yellow cat stay with her today. This makes Aliya instantly more jealous and protective, moving a little closer to MoePus and protesting in a cute, animated way. The tone remains lighthearted and silly. At the end, MoePus gently exposes Aliya’s jealousy, and Aliya proudly declares that she is the special one who does not need to queue. Then Aliya breaks into a cheerful laugh that transitions perfectly into the provided laughing last frame.\n\nDetailed acting notes:\n- Aliya begins with嫌弃 and吐槽 energy, clearly annoyed by the off-screen big yellow cat.\n- Aliya’s expression shifts should be vivid and readable:嫌弃 → 不爽 → 嘴硬 → 被逗急了 → 明显吃醋 → 护着 MoePus → 得意坏笑 → 开心大笑.\n- MoePus should smile calmly, watch Aliya’s reaction, and deliberately tease her by pretending to favor the big yellow cat.\n- When MoePus says she may choose the big yellow cat, Aliya should react strongly and immediately, visibly moving closer toward MoePus.\n- The whole interaction should feel like affectionate playful banter, not conflict.\n- End with a bright, funny, cheerful mood.\n\nAudio: soft indoor ambience, light room tone, no loud background music, keep dialogue clear and front-focused. Both voices should be cute and anime-like, with natural emotional timing and accurate lip sync. Aliya’s voice is lively and childlike. MoePus’s voice is slightly husky and playful. Use the following dialogue timing and tone:\n\nAliya (looking off-screen, very嫌弃, lively child voice):\n“你看，那个变态大黄猫又来找你发电了！”\n\nMoePus (calm, amused, teasing):\n“他不是冲着你这种可爱小孩来的吗？”\n\nAliya (instantly嫌弃 and unhappy):\n“才不是！那只大黄猫可下头了，上次还一直往你身边凑！”\n\nMoePus (slight smile, playful):\n“诶？你记得这么清楚呀？”\n\nAliya (briefly flustered, then defensive):\n“我只是看不惯他老缠着你而已！”\n\nMoePus (smile deepens, deliberately teasing):\n“这样啊……可我觉得他还挺热情的。”\n\nSFX: off-screen comedic cat meow:\n“喵——”\n\nAliya (turns immediately toward the sound, even more嫌弃):\n“你看！又来了！”\n\nMoePus (pretending to consider it seriously, teasing Aliya on purpose):\n“那不然……今天就让大黄猫陪我好了？”\n\nAliya (instantly jealous, moving closer to MoePus, energetic and flustered):\n“哈？！不行！你怎么可以选他啊！”\n\nMoePus (trying not to laugh):\n“为什么不行？”\n\nAliya (pouting, then boldly claiming her place):\n“因为他太烦了！而且要陪也是我陪你，哪里轮得到他！”\n\nMoePus (gently laughing, teasing conclusion):\n“哦——原来你已经自己排到第一位了呀？”\n\nAliya (smug, proud, playful, then starts laughing):\n“哼，那当然，我可是免排队的！”\n\nAfter that, Aliya breaks into a big cheerful laugh, and MoePus smiles with amused affection. End on a joyful silly atmosphere, landing naturally on the provided final laughing frame.\n\nExtra quality requirements: highly expressive character animation, lively and natural micro-expressions, smooth lip sync, smooth eye contact, polished finger and hand motion, subtle breathing, natural upper body movement, and perfect visual consistency with the images. Preserve exact outfit colors, skin tones, hair colors, eye colors, lighting softness, and background hues from the reference images. The whole skit should feel cute, lively, funny, and full of playful chemistry.",
+   "width": [
+    "115",
+    0
+   ],
+   "height": [
+    "115",
+    1
+   ],
+   "length": [
+    "102",
+    1
+   ],
+   "first_frame": [
+    "149",
+    0
+   ],
+   "last_frame": [
+    "167",
+    0
+   ]
+  }
+ },
+ "104": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "scheduler": "beta",
+   "steps": 8,
+   "denoise": 1.0
+  }
+ },
+ "105": {
+  "class_type": "BasicGuider",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "conditioning": [
+    "103",
+    0
+   ]
+  }
+ },
+ "106": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 768914106098754
+  }
+ },
+ "107": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "106",
+    0
+   ],
+   "guider": [
+    "105",
+    0
+   ],
+   "sampler": [
+    "142",
+    0
+   ],
+   "sigmas": [
+    "104",
+    0
+   ],
+   "latent_image": [
+    "103",
+    1
+   ]
+  }
+ },
+ "108": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "107",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ]
+  }
+ },
+ "109": {
+  "class_type": "VAEDecodeAudio",
+  "inputs": {
+   "samples": [
+    "107",
+    0
+   ],
+   "vae": [
+    "120",
+    0
+   ]
+  }
+ },
+ "110": {
+  "class_type": "VRAM_Debug",
+  "inputs": {
+   "image_pass": [
+    "108",
+    0
+   ],
+   "empty_cache": true,
+   "gc_collect": true,
+   "unload_all_models": false
+  }
+ },
+ "111": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "frame_rate": 24.0,
+   "loop_count": 0,
+   "filename_prefix": "H3_seg1_",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 20,
+   "save_metadata": true,
+   "trim_to_audio": false,
+   "pingpong": false,
+   "save_output": true,
+   "images": [
+    "110",
+    1
+   ],
+   "audio": [
+    "109",
+    0
+   ]
+  }
+ },
+ "112": {
+  "class_type": "ImageFromBatch",
+  "inputs": {
+   "image": [
+    "108",
+    0
+   ],
+   "batch_index": -1,
+   "length": 1
+  }
+ },
+ "201": {
+  "class_type": "PrimitiveFloat",
+  "inputs": {
+   "value": 8.0
+  }
+ },
+ "202": {
+  "class_type": "ComfyMathExpression",
+  "inputs": {
+   "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+   "values.a": [
+    "201",
+    0
+   ]
+  }
+ },
+ "203": {
+  "class_type": "MiniMaxH3ImageToVideo",
+  "inputs": {
+   "clip": [
+    "128",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "prompt": "[SEGMENT 2/4 - continue the SAME story] Keep identical characters, art style, clothing and setting from part 1 (copy the character/style description here). This part: (describe what happens in these ~8 seconds - the clip starts exactly where part 1 ended). Audio: continue the same music/ambience from the previous part, keep it evolving smoothly.",
+   "width": [
+    "115",
+    0
+   ],
+   "height": [
+    "115",
+    1
+   ],
+   "length": [
+    "202",
+    1
+   ],
+   "first_frame": [
+    "112",
+    0
+   ]
+  }
+ },
+ "204": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "scheduler": "beta",
+   "steps": 8,
+   "denoise": 1.0
+  }
+ },
+ "205": {
+  "class_type": "BasicGuider",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "conditioning": [
+    "203",
+    0
+   ]
+  }
+ },
+ "206": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 768914106098755
+  }
+ },
+ "207": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "206",
+    0
+   ],
+   "guider": [
+    "205",
+    0
+   ],
+   "sampler": [
+    "142",
+    0
+   ],
+   "sigmas": [
+    "204",
+    0
+   ],
+   "latent_image": [
+    "203",
+    1
+   ]
+  }
+ },
+ "208": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "207",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ]
+  }
+ },
+ "209": {
+  "class_type": "VAEDecodeAudio",
+  "inputs": {
+   "samples": [
+    "207",
+    0
+   ],
+   "vae": [
+    "120",
+    0
+   ]
+  }
+ },
+ "210": {
+  "class_type": "VRAM_Debug",
+  "inputs": {
+   "image_pass": [
+    "208",
+    0
+   ],
+   "empty_cache": true,
+   "gc_collect": true,
+   "unload_all_models": false
+  }
+ },
+ "211": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "frame_rate": 24.0,
+   "loop_count": 0,
+   "filename_prefix": "H3_seg2_",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 20,
+   "save_metadata": true,
+   "trim_to_audio": false,
+   "pingpong": false,
+   "save_output": true,
+   "images": [
+    "210",
+    1
+   ],
+   "audio": [
+    "209",
+    0
+   ]
+  }
+ },
+ "212": {
+  "class_type": "ImageFromBatch",
+  "inputs": {
+   "image": [
+    "208",
+    0
+   ],
+   "batch_index": -1,
+   "length": 1
+  }
+ },
+ "301": {
+  "class_type": "PrimitiveFloat",
+  "inputs": {
+   "value": 8.0
+  }
+ },
+ "302": {
+  "class_type": "ComfyMathExpression",
+  "inputs": {
+   "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+   "values.a": [
+    "301",
+    0
+   ]
+  }
+ },
+ "303": {
+  "class_type": "MiniMaxH3ImageToVideo",
+  "inputs": {
+   "clip": [
+    "128",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "prompt": "[SEGMENT 3/4 - continue the SAME story] Keep identical characters, art style, clothing and setting from part 1 (copy the character/style description here). This part: (describe what happens in these ~8 seconds - the clip starts exactly where part 2 ended). Audio: continue the same music/ambience from the previous part, keep it evolving smoothly.",
+   "width": [
+    "115",
+    0
+   ],
+   "height": [
+    "115",
+    1
+   ],
+   "length": [
+    "302",
+    1
+   ],
+   "first_frame": [
+    "212",
+    0
+   ]
+  }
+ },
+ "304": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "scheduler": "beta",
+   "steps": 8,
+   "denoise": 1.0
+  }
+ },
+ "305": {
+  "class_type": "BasicGuider",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "conditioning": [
+    "303",
+    0
+   ]
+  }
+ },
+ "306": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 768914106098756
+  }
+ },
+ "307": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "306",
+    0
+   ],
+   "guider": [
+    "305",
+    0
+   ],
+   "sampler": [
+    "142",
+    0
+   ],
+   "sigmas": [
+    "304",
+    0
+   ],
+   "latent_image": [
+    "303",
+    1
+   ]
+  }
+ },
+ "308": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "307",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ]
+  }
+ },
+ "309": {
+  "class_type": "VAEDecodeAudio",
+  "inputs": {
+   "samples": [
+    "307",
+    0
+   ],
+   "vae": [
+    "120",
+    0
+   ]
+  }
+ },
+ "310": {
+  "class_type": "VRAM_Debug",
+  "inputs": {
+   "image_pass": [
+    "308",
+    0
+   ],
+   "empty_cache": true,
+   "gc_collect": true,
+   "unload_all_models": false
+  }
+ },
+ "311": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "frame_rate": 24.0,
+   "loop_count": 0,
+   "filename_prefix": "H3_seg3_",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 20,
+   "save_metadata": true,
+   "trim_to_audio": false,
+   "pingpong": false,
+   "save_output": true,
+   "images": [
+    "310",
+    1
+   ],
+   "audio": [
+    "309",
+    0
+   ]
+  }
+ },
+ "312": {
+  "class_type": "ImageFromBatch",
+  "inputs": {
+   "image": [
+    "308",
+    0
+   ],
+   "batch_index": -1,
+   "length": 1
+  }
+ },
+ "401": {
+  "class_type": "PrimitiveFloat",
+  "inputs": {
+   "value": 8.0
+  }
+ },
+ "402": {
+  "class_type": "ComfyMathExpression",
+  "inputs": {
+   "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+   "values.a": [
+    "401",
+    0
+   ]
+  }
+ },
+ "403": {
+  "class_type": "MiniMaxH3ImageToVideo",
+  "inputs": {
+   "clip": [
+    "128",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ],
+   "prompt": "[SEGMENT 4/4 - continue the SAME story] Keep identical characters, art style, clothing and setting from part 1 (copy the character/style description here). This part: (describe what happens in these ~8 seconds - the clip starts exactly where part 3 ended). Audio: continue the same music/ambience from the previous part, keep it evolving smoothly.",
+   "width": [
+    "115",
+    0
+   ],
+   "height": [
+    "115",
+    1
+   ],
+   "length": [
+    "402",
+    1
+   ],
+   "first_frame": [
+    "312",
+    0
+   ]
+  }
+ },
+ "404": {
+  "class_type": "BasicScheduler",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "scheduler": "beta",
+   "steps": 8,
+   "denoise": 1.0
+  }
+ },
+ "405": {
+  "class_type": "BasicGuider",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "conditioning": [
+    "403",
+    0
+   ]
+  }
+ },
+ "406": {
+  "class_type": "RandomNoise",
+  "inputs": {
+   "noise_seed": 768914106098757
+  }
+ },
+ "407": {
+  "class_type": "SamplerCustomAdvanced",
+  "inputs": {
+   "noise": [
+    "406",
+    0
+   ],
+   "guider": [
+    "405",
+    0
+   ],
+   "sampler": [
+    "142",
+    0
+   ],
+   "sigmas": [
+    "404",
+    0
+   ],
+   "latent_image": [
+    "403",
+    1
+   ]
+  }
+ },
+ "408": {
+  "class_type": "VAEDecode",
+  "inputs": {
+   "samples": [
+    "407",
+    0
+   ],
+   "vae": [
+    "119",
+    0
+   ]
+  }
+ },
+ "409": {
+  "class_type": "VAEDecodeAudio",
+  "inputs": {
+   "samples": [
+    "407",
+    0
+   ],
+   "vae": [
+    "120",
+    0
+   ]
+  }
+ },
+ "410": {
+  "class_type": "VRAM_Debug",
+  "inputs": {
+   "image_pass": [
+    "408",
+    0
+   ],
+   "empty_cache": true,
+   "gc_collect": true,
+   "unload_all_models": false
+  }
+ },
+ "411": {
+  "class_type": "VHS_VideoCombine",
+  "inputs": {
+   "frame_rate": 24.0,
+   "loop_count": 0,
+   "filename_prefix": "H3_seg4_",
+   "format": "video/h264-mp4",
+   "pix_fmt": "yuv420p",
+   "crf": 20,
+   "save_metadata": true,
+   "trim_to_audio": false,
+   "pingpong": false,
+   "save_output": true,
+   "images": [
+    "410",
+    1
+   ],
+   "audio": [
+    "409",
+    0
+   ]
+  }
+ },
+ "412": {
+  "class_type": "ImageFromBatch",
+  "inputs": {
+   "image": [
+    "408",
+    0
+   ],
+   "batch_index": -1,
+   "length": 1
+  }
+ },
+ "999": {
+  "class_type": "VRAM_Debug",
+  "inputs": {
+   "image_pass": [
+    "412",
+    0
+   ],
+   "empty_cache": true,
+   "gc_collect": true,
+   "unload_all_models": true
+  }
+ }
+}

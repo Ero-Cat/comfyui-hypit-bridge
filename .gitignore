@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+packages/*/node_modules/
+
+# Generated outputs & large media
+output/
+*.mp4
+*.wav
+*.lock
+
+# Runtime state (Hypit)
+.hypit/
+
+# Private configuration (contains LAN IPs and credentials)
+hypit.runtime.json
+docs/ATX5090-ssh.md
+docs/PATCHES.md
+
+# Sanitizer itself (contains the real IPs/credentials it replaces)
+tools/_sanitize.py
+
+# Private assets (reference faces, voice recordings)
+assets/
+
+# Agent-local scratch
+.zcode/plans/
+.zcode/cache/
+
+# OS
+.DS_Store
+__pycache__/
+*.pyc
+
+# Build artifacts (regenerate with npm run build)
+packages/*/dist/
