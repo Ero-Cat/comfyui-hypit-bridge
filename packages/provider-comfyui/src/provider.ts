@@ -92,14 +92,23 @@ export const comfyuiDefaults = {
   pollIntervalMs: 5_000,
   chainEngine: "auto",
   // Reference-driven regeneration (MiniMaxH3ReferenceToVideo): official quality-first recipe —
-  // ref2va weights, res_multistep/simple at 20 steps, no turbo LoRA. refTurbo swaps in the ref2v
-  // 4-step turbo LoRA (5× faster, v0.1 quality — compare before trusting long renders).
+  // ref2va weights, res_multistep/simple at 20 steps, no turbo LoRA. refTurbo swaps in a ref2v
+  // turbo LoRA at refTurboSteps (4-step v0.1 and 8-step v1.0 768p pairings ship on lightx2v's
+  // repo; the step count must match the LoRA's distillation).
   refUnetName: "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-  refLoraName: "minimax_h3_ref2v_turbo_4step_v1.0_comfyui_bf16.safetensors",
+  refLoraName: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
   refTurbo: false,
+  refTurboSteps: 4,
   refSteps: 20,
   refSampler: "res_multistep",
   refScheduler: "simple",
+  // SolAttn on the ref2va path defaults off (official R2V recipe); flip to true after the
+  // A/B benchmark accepts its quality — the same patch is already proven on the fl2va path.
+  refSolAttn: false,
+  // Motion-priority SolAttn profile for the ref path: dense through the early trajectory
+  // (motion establishment) and int8_pv off — tuned after the 2026-09-23 A/B showed tau 1.3 /
+  // start 0.2 / int8_pv cost motion liveliness for speed.
+  refSolAttnTau: 1.0, refSolAttnStart: 0.4, refSolAttnEnd: 0.9, refSolAttnInt8Pv: false,
   // Motion following (MiniMaxH3FunControlNetApply): the official Fun ControlNet Union patch at
   // full strength on ref2va; the control signal comes from DWPose/DepthAnything extraction of a
   // raw video, or passes through untouched when the author supplies a pre-extracted signal.
@@ -387,7 +396,7 @@ type ComfyGraph = Record<string, ComfyNode>;
 type GenerationSettings = {
   unetName: string; loraName: string; clipName: string; videoVaeName: string; audioVaeName: string;
   steps: number; sampler: string; scheduler: string; useSolAttn: boolean; filenamePrefix: string; crf: number;
-  refUnetName: string; refLoraName: string; refTurbo: boolean; refSteps: number; refSampler: string; refScheduler: string;
+  refUnetName: string; refLoraName: string; refTurbo: boolean; refTurboSteps: number; refSteps: number; refSampler: string; refScheduler: string; refSolAttn: boolean; refSolAttnTau: number; refSolAttnStart: number; refSolAttnEnd: number; refSolAttnInt8Pv: boolean;
   controlPatchName: string;
   allowAuto2K: boolean;
   chainRef2va: boolean;
@@ -398,7 +407,8 @@ type GenerationSettings = {
 /** The standard fl2va model chain used by single-take, chain and retake graphs. */
 
 function modelChainNodes(settings: GenerationSettings,
-  overrides: { unetName?: string; loraName?: string; useSolAttn?: boolean } = {}): { graph: ComfyGraph; model: [string, number]; clip: [string, number]; videoVae: [string, number]; audioVae: [string, number] } {
+  overrides: { unetName?: string; loraName?: string; useSolAttn?: boolean;
+    solAttnTau?: number; solAttnStart?: number; solAttnEnd?: number; solAttnInt8Pv?: boolean } = {}): { graph: ComfyGraph; model: [string, number]; clip: [string, number]; videoVae: [string, number]; audioVae: [string, number] } {
   const unetName = overrides.unetName ?? settings.unetName;
   const loraName = overrides.loraName !== undefined ? overrides.loraName : settings.loraName;
   const useSolAttn = overrides.useSolAttn ?? settings.useSolAttn;
@@ -416,9 +426,11 @@ function modelChainNodes(settings: GenerationSettings,
   if (useSolAttn) {
     graph.sol_attn = {
       class_type: "SolAttnPatch", inputs: {
-        model: modelSource, tau: 1.3, start_percent: 0.2, end_percent: 0.9, min_tokens: 4096,
+        model: modelSource, tau: overrides.solAttnTau ?? 1.3,
+        start_percent: overrides.solAttnStart ?? 0.2, end_percent: overrides.solAttnEnd ?? 0.9,
+        min_tokens: 4096,
         int8_qk: true, sink_conditioning: "exact_kv_and_rows", morton: false, morton_curve: "2d_frame",
-        int8_pv: true, verbose: false, use_tma: false, dense_blocks: "",
+        int8_pv: overrides.solAttnInt8Pv ?? true, verbose: false, use_tma: false, dense_blocks: "",
       },
     };
     modelSource = ["sol_attn", 0];
@@ -561,7 +573,9 @@ function buildReferenceGraph(args: {
   const model = modelChainNodes(settings, {
     unetName: settings.refUnetName,
     loraName: settings.refTurbo ? settings.refLoraName : "",
-    useSolAttn: false,
+    useSolAttn: settings.refSolAttn,
+    solAttnTau: settings.refSolAttnTau, solAttnStart: settings.refSolAttnStart,
+    solAttnEnd: settings.refSolAttnEnd, solAttnInt8Pv: settings.refSolAttnInt8Pv,
   });
   const graph = model.graph;
   const encodeInputs: Record<string, unknown> = {
@@ -595,7 +609,7 @@ function buildReferenceGraph(args: {
   graph.sampler_select = { class_type: "KSamplerSelect", inputs: { sampler_name: settings.refSampler } };
   graph.sigmas = {
     class_type: "BasicScheduler",
-    inputs: { model: model.model, scheduler: settings.refScheduler, steps: settings.refTurbo ? 4 : settings.refSteps, denoise: 1 },
+    inputs: { model: model.model, scheduler: settings.refScheduler, steps: settings.refTurbo ? settings.refTurboSteps : settings.refSteps, denoise: 1 },
   };
   graph.sample = {
     class_type: "SamplerCustomAdvanced",
@@ -719,7 +733,9 @@ function buildControlGraph(args: {
   const model = modelChainNodes(settings, {
     unetName: settings.refUnetName,
     loraName: settings.refTurbo ? settings.refLoraName : "",
-    useSolAttn: false,
+    useSolAttn: settings.refSolAttn,
+    solAttnTau: settings.refSolAttnTau, solAttnStart: settings.refSolAttnStart,
+    solAttnEnd: settings.refSolAttnEnd, solAttnInt8Pv: settings.refSolAttnInt8Pv,
   });
   const graph = model.graph;
   graph.control_patch = { class_type: "ModelPatchLoader", inputs: { name: settings.controlPatchName } };
@@ -748,7 +764,7 @@ function buildControlGraph(args: {
   graph.sampler_select = { class_type: "KSamplerSelect", inputs: { sampler_name: settings.refSampler } };
   graph.sigmas = {
     class_type: "BasicScheduler",
-    inputs: { model: ["control_apply", 0], scheduler: settings.refScheduler, steps: settings.refTurbo ? 4 : settings.refSteps, denoise: 1 },
+    inputs: { model: ["control_apply", 0], scheduler: settings.refScheduler, steps: settings.refTurbo ? settings.refTurboSteps : settings.refSteps, denoise: 1 },
   };
   graph.sample = {
     class_type: "SamplerCustomAdvanced",
@@ -858,7 +874,11 @@ export function createComfyuiProvider(options: {
   useSolAttn?: boolean | undefined;
   chainEngine?: string | undefined;
   refUnetName?: string | undefined; refLoraName?: string | undefined; refTurbo?: boolean | undefined;
+  refTurboSteps?: number | undefined;
   refSteps?: number | undefined; refSampler?: string | undefined; refScheduler?: string | undefined;
+  refSolAttn?: boolean | undefined;
+  refSolAttnTau?: number | undefined; refSolAttnStart?: number | undefined;
+  refSolAttnEnd?: number | undefined; refSolAttnInt8Pv?: boolean | undefined;
   controlPatchName?: string | undefined;
   allowAuto2K?: boolean | undefined;
   chainRef2va?: boolean | undefined;
@@ -888,7 +908,13 @@ export function createComfyuiProvider(options: {
     refUnetName: options.refUnetName !== undefined ? options.refUnetName : comfyuiDefaults.refUnetName,
     refLoraName: options.refLoraName ?? comfyuiDefaults.refLoraName,
     refTurbo: options.refTurbo ?? comfyuiDefaults.refTurbo,
+    refTurboSteps: options.refTurboSteps ?? comfyuiDefaults.refTurboSteps,
     refSteps: options.refSteps ?? comfyuiDefaults.refSteps,
+    refSolAttn: options.refSolAttn ?? comfyuiDefaults.refSolAttn,
+    refSolAttnTau: options.refSolAttnTau ?? comfyuiDefaults.refSolAttnTau,
+    refSolAttnStart: options.refSolAttnStart ?? comfyuiDefaults.refSolAttnStart,
+    refSolAttnEnd: options.refSolAttnEnd ?? comfyuiDefaults.refSolAttnEnd,
+    refSolAttnInt8Pv: options.refSolAttnInt8Pv ?? comfyuiDefaults.refSolAttnInt8Pv,
     refSampler: options.refSampler ?? comfyuiDefaults.refSampler,
     refScheduler: options.refScheduler ?? comfyuiDefaults.refScheduler,
     controlPatchName: options.controlPatchName !== undefined ? options.controlPatchName : comfyuiDefaults.controlPatchName,
@@ -1183,7 +1209,7 @@ export function createComfyuiProvider(options: {
       && settings.refUnetName.length > 0 && Array.isArray(unetList) && unetList.includes(settings.refUnetName);
     const graph = buildMultishotGraph({
       prompt: script, width: dimensions.width, height: dimensions.height, frames: framesPerShot, seed,
-      steps: chainOnRef2va && !settings.chainTurbo ? settings.refSteps : (chainOnRef2va ? 4 : settings.steps),
+        steps: chainOnRef2va && !settings.chainTurbo ? settings.refSteps : (chainOnRef2va ? settings.refTurboSteps : settings.steps),
       ...(firstFrame !== undefined ? { firstFrame } : {}), referenceImages, referenceAudios,
     }, settings, {
       shotCount: 0, saveEveryShot: blocks.length >= 2, selfAnchorVoice: settings.selfAnchorVoice,

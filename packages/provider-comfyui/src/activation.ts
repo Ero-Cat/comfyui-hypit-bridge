@@ -4,10 +4,16 @@ import {
 } from "@hypit/hypit/runtime-kit";
 import { createComfyuiProvider, providerModule } from "./provider.js";
 
+function configNumber(value: unknown, subject: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${subject} must be a finite number`);
+  return value;
+}
+
 const CONFIG_KEYS = [
   "baseUrl", "concurrency", "pollIntervalMs", "steps", "sampler", "scheduler", "crf",
   "filenamePrefix", "unetName", "loraName", "clipName", "videoVaeName", "audioVaeName", "useSolAttn",
-  "chainEngine", "refUnetName", "refLoraName", "refTurbo", "refSteps", "refSampler", "refScheduler",
+  "chainEngine", "refUnetName", "refLoraName", "refTurbo", "refTurboSteps", "refSteps", "refSampler", "refScheduler", "refSolAttn", "refSolAttnTau", "refSolAttnStart", "refSolAttnEnd", "refSolAttnInt8Pv",
   "controlPatchName", "allowAuto2K", "chainRef2va", "chainTurbo", "selfAnchorVoice",
 ];
 
@@ -39,9 +45,15 @@ export default {
         refUnetName: runtimeConfigString(config.refUnetName, "ComfyUI refUnetName"),
         refLoraName: runtimeConfigString(config.refLoraName, "ComfyUI refLoraName"),
         refTurbo: runtimeConfigBoolean(config.refTurbo, "ComfyUI refTurbo"),
+        refTurboSteps: runtimeConfigPositiveInteger(config.refTurboSteps, "ComfyUI refTurboSteps"),
         refSteps: runtimeConfigPositiveInteger(config.refSteps, "ComfyUI refSteps"),
         refSampler: runtimeConfigString(config.refSampler, "ComfyUI refSampler"),
         refScheduler: runtimeConfigString(config.refScheduler, "ComfyUI refScheduler"),
+        refSolAttn: runtimeConfigBoolean(config.refSolAttn, "ComfyUI refSolAttn"),
+        refSolAttnTau: configNumber(config.refSolAttnTau, "ComfyUI refSolAttnTau"),
+        refSolAttnStart: configNumber(config.refSolAttnStart, "ComfyUI refSolAttnStart"),
+        refSolAttnEnd: configNumber(config.refSolAttnEnd, "ComfyUI refSolAttnEnd"),
+        refSolAttnInt8Pv: runtimeConfigBoolean(config.refSolAttnInt8Pv, "ComfyUI refSolAttnInt8Pv"),
         controlPatchName: runtimeConfigString(config.controlPatchName, "ComfyUI controlPatchName"),
         allowAuto2K: runtimeConfigBoolean(config.allowAuto2K, "ComfyUI allowAuto2K"),
         chainRef2va: runtimeConfigBoolean(config.chainRef2va, "ComfyUI chainRef2va"),

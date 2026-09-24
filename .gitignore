@@ -22,6 +22,9 @@ tools/_sanitize.py
 # Private assets (reference faces, voice recordings)
 assets/
 
+# Production projects (briefs, reference frames, voice anchors, outputs)
+productions/
+
 # Agent-local scratch
 .zcode/plans/
 .zcode/cache/
