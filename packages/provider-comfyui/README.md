@@ -132,3 +132,5 @@ cd ../.. && npm install ./packages/provider-comfyui
 | `h3-dahuangmao34-test.svrun`（v4：fl2va@8 + 脸部裁片参考 + 去短视频措辞 + 成品 delogo 后处理） | ✅ 身份中段帧验证（三要素+按摩动作+无字幕）；台词实质全命中；32.417s；**字幕条（模型自生成的抖音先验）由成品后处理 delogo 消除**。经验：模型对"对镜头说话"内容有画字幕条的强先验，提示词只能部分抑制，成品后处理是稳妥兜底 |
 
 注意：`.svml` 里提示词正文中的 `<Subject 1>` 这类尖括号必须写成 `&lt;Subject 1&gt;`（XML 实体）。
+| `upscale16.svrun`（**1080P 超分 GAN 档**：tonghuashun 16s 1280×736 → 1920×1080，4x-UltraSharp + VHS meta-batch 48 帧批） | ✅ 2026-09-24：1920×1080/24fps/294 帧精确、AAC 音轨保留、时长不变；1.06s/帧（48 帧批；16 帧批 2.3s/帧）；QC 网格：发丝/边缘/织物细节提升，无过锐伪影无色偏。**meta-batch 追踪机制**：VHS 重排队后代由 poll 按上传文件名领养（trackVideo handle 字段，所有 wakeAfter 必须携带） |
+| `upscale16-sv2.svrun`（**1080P 超分 SeedVR2 档**：同源，seedvr2_3b_int8 + 原生节点链，单 prompt 无分批） | ✅ 2026-09-24：1920×1080/24fps/294 帧、音轨保留；1.19s/帧（≈官方 5090 口径）；QC：发丝成缕重建/缎面织物高光自然、五官零漂移、四节拍稳定。护栏：源 ≤45s（主机 RAM 约束），超限在 start 阶段拒绝并建议 gan 档 |

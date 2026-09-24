@@ -65,6 +65,7 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
 | 长镜头链式 | `<h3c:TakeVideo>` | 16–90s | 有脚本的多窗叙事；无参考→无限窗引擎，有参考→无缝链引擎 |
 | 局部改写 | `<h3r:Retake>` | 窗口 ≤15.2s | 成品小修，不动其余画面 |
 | 动作跟随 | `<h3ctl:ControlVideo>` | 6–15s | 姿态/深度严格跟随（**未做 GPU 实测**） |
+| 成品高清化 1080P | `<h3up:UpscaleVideo>` | gan 任意 / seedvr2 ≤45s | 成片后处理超分，双档（2026-09-24 实测） |
 
 按场景推荐（本项目实测结论）：
 
@@ -80,6 +81,14 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
   aspectRatio 禁用，继承引导图比例）。
 - **成品微调**：`<h3r:Retake>`（`video` 保声音重渲画面 / `audio` 保画面只重做声音）。
   源视频全帧载入内存：30s 源 ≈8GB 可行，61s 源 16.6GB 会 OOM——长源先 `ffmpeg -t 30 -c copy` 裁剪。
+- **成品交付 1080P**：`<h3up:UpscaleVideo source={take.video} lane=... model=... fit=...>`（2026-09-24
+  实测 tonghuashun 16s，产物 `out/tonghuashun-16s-1080p-*.mp4`）。两档：**gan 快速档**（逐帧
+  UltraSharp 4x 超采样+Lanczos 落幅，VHS meta-batch 分批，~1.1s/帧@48 帧批，风格零改动）、
+  **seedvr2 质量档**（原生一步扩散复原，~1.2s/帧，发丝/织物细节重建更自然、时序一致，≤45s 源）。
+  模型按内容选并呈卡说明理由：真人/写实/3D 渲染 → `4x-ultrasharp`（备选 `realesrgan-x4plus`）；
+  2D 平涂动画 → `animevideov3`。`fit`：crop（默认，1.74:1→16:9 裁 2.2% 高度）/ pad（黑边）/ keep
+  （1920×1104 不裁）。音轨/时长/帧率原样保留；超分同样占 GPU，照走 §2 确认卡。验证
+  `verify_output.sh --expect-res 1920x1080 --expect-fps 24` + `qc_grid.sh` 目检。
 
 ## 4. 硬性约束与已知坑
 
@@ -110,12 +119,18 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
 - **台词节奏实测 ~0.33s/字（含停顿），比理论 0.22s/字慢 ~50%**：定裁点前先算语音收口，
   32s 成片台词总字数按 ≤95 字预算、收口留 ≥1s 余量，否则裁点会切断末句
   （tonghuashun v1 台词说到 33.4s 的教训）。
-- **ref 路径画幅推导的探针 bug（2026-09-24 实锤）**：provider 的 mp4Probe 命中**第一个**
-  tkhd（可能是音频轨的），本仓实文件上读出 (720,0)→height=0 被拒→视频探针不生效→画幅
-  推导**回落到第一张图片参考**。历史上 ref 路径没带图参考时回落默认 16:9"碰巧正确"，
-  带竖幅图参考就会出竖片（tonghuashun 16s 首烧 832×1152）。**规避法：ref 路径参考图#1
-  永远放目标画幅锚图（如 1280×720 的 ref-169.png）**；根治需改 mp4Probe 遍历全部 tkhd
-  取双维>0 的那个（待办，需 npm build + reinstall）
+- **ref 路径画幅推导的探针 bug（2026-09-24 实锤，同日已根治）**：provider 的 mp4Probe 曾命中
+  **第一个** tkhd（可能是音频轨的），本仓实文件上读出 (720,0)→height=0 被拒→视频探针不生效→
+  画幅推导**回落到第一张图片参考**（tonghuashun 16s 首烧 832×1152 的教训）。**已根治：mp4Probe
+  现遍历全部 tkhd 取双维>0 的第一个**（随 2026-09-24 超分改造一并上线）。历史规避法仍有效：
+  ref 路径参考图#1 永远放目标画幅锚图（如 1280×720 的 ref-169.png）。
+- **改 packages/ 源码后必须重启 hypit worker**（2026-09-24 三连坑）：`npm run build` +
+  `npm install ./packages/...` 不够——`hypit _worker` 常驻进程**缓存启动时加载的 provider 代码**，
+  不重启就永远跑旧逻辑（表现为"改了没生效"）。标准动作：
+  `cd 仓库根 && hypit runtime down && hypit runtime up`（注意必须在仓库根目录执行，子目录会报
+  "runtime requires a Runtime"）。
+- **GAN 超分档的 meta-batch 分批数显著影响速度**：frames_per_batch 16 → 2.3s/帧；48 → 1.06s/帧
+  （2.2×，显存峰值 ~10GB/32GB 安全）。runtime 配置键 `upscaleFramesPerBatch`，当前 48。
 - **SVML 里的尖括号占位符必须写 XML 实体**：`&lt;Subject 1&gt;`、`&lt;Audio 1&gt;`。
 - **单镜头请求的 prompt 含 `---` 分行会被拒绝**（那是链式分镜分隔符）。
 - **局域网地址只接受 http 内网/回环**；公网必须 https。

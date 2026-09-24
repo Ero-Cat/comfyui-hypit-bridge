@@ -19,6 +19,11 @@ description: 给一个真人/角色视频换台词、保人物、保声线、去
 5. **生成**：确认后组装 `<h3c:TakeVideo>`（净化参考帧 ×5 + 声音锚 ≤12s + 可选首帧；
    duration 显式或按脚本词密度自动；比例/分辨率自动推导），`hypit build` 提交
 6. **验证**：`verify_output` 全项（时长/无静态水印残留/静音节拍/转写逐行核对），报告给用户
+7. **交付前 1080P 高清化（可选，按用户要求）**：`<h3up:UpscaleVideo source={take.video}
+   lane=... fit=...>`（占 GPU，照走确认卡）。档位与模型按内容选：重点交付/细节优先 →
+   `seedvr2`（~1.2s/帧，源 ≤45s）；快速/批量 → `gan` + `4x-ultrasharp`（真人/3D）或
+   `animevideov3`（2D 动画）。完成后 `verify_output.sh --expect-res 1920x1080
+   --expect-fps 24` + `qc_grid.sh <源> <成品>` 出对比网格目检
 
 ## 脚本速查
 
@@ -27,7 +32,8 @@ python3 tools/watermark_detect.py <video> > wm.json        # 检测（需 agent 
 bash tools/clean_watermark.sh <in> <out> --json wm.json     # delogo 修补
 bash tools/extract_assets.sh <clean.mp4> <outdir> [时刻...] # 参考帧 + 音轨
 bash tools/transcribe.sh <wav> <outdir> --cut "START DUR"   # 转写 + brief + 声音锚
-bash tools/verify_output.sh <out.mp4> --expect-script <txt> # 全项验证
+bash tools/verify_output.sh <out.mp4> --expect-script <txt> # 全项验证（可加 --expect-res/--expect-fps）
+bash tools/qc_grid.sh <src.mp4> <upscaled.mp4> [节拍] -o qc.png  # 超分前后对比网格
 ```
 
 ## 关键经验（踩过的坑）

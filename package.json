@@ -1,0 +1,13 @@
+{
+  "name": "minimax-h3-prompt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@local/h3-chain": "file:packages/model-h3-chain",
+    "@local/h3-control": "file:packages/model-h3-control",
+    "@local/h3-retake": "file:packages/model-h3-retake",
+    "@local/h3-upscale": "file:packages/model-h3-upscale",
+    "provider-comfyui": "file:packages/provider-comfyui"
+  }
+}

@@ -19,6 +19,7 @@ export const capability = { module: { name: "@hypit/minimax-h3", version: "1" },
 export const chainCapability = { module: { name: "@local/h3-chain", version: "1" }, name: "h3-chain-take" } as const;
 export const retakeCapability = { module: { name: "@local/h3-retake", version: "1" }, name: "h3-retake" } as const;
 export const controlCapability = { module: { name: "@local/h3-control", version: "1" }, name: "h3-control" } as const;
+export const upscaleCapability = { module: { name: "@local/h3-upscale", version: "1" }, name: "h3-upscale" } as const;
 
 // Every authored port has a declared field; referenceVideo has no node input anywhere in this
 // deployment, so supports() refuses it explicitly instead of letting a mapping drop it silently.
@@ -68,6 +69,16 @@ export const controlMapping: GenerationWireMapping = {
     aspectRatio: { as: "value", field: "aspectRatio" },
     controlVideo: { as: "url", field: "controlVideo" },
     controlType: { as: "value", field: "controlType" },
+  },
+};
+export const upscaleMapping: GenerationWireMapping = {
+  capability: upscaleCapability, result: "video", routes: [{ model: "h3-upscale" }],
+  fields: {
+    source: { as: "url", field: "source" },
+    target: { as: "value", field: "target" },
+    lane: { as: "value", field: "lane" },
+    model: { as: "value", field: "model" },
+    fit: { as: "value", field: "fit" },
   },
 };
 
@@ -123,6 +134,18 @@ export const comfyuiDefaults = {
   chainRef2va: true,
   chainTurbo: true,
   selfAnchorVoice: true,
+  // Video upscaling post-process (finished H3 takes → 1080P). Two lanes: "gan" runs a per-frame
+  // upscale model (4x supersampling, Lanczos down to target) through VHS meta-batches — minutes
+  // per take, style-faithful, no redraw; "seedvr2" runs ComfyUI's native one-step diffusion
+  // restoration at the target geometry — richer detail and temporal coherence at ~1 s/frame.
+  upscaleGanModel: "4x-ultrasharp",
+  upscaleSeedvr2Name: "seedvr2_3b_int8_convrot.safetensors",
+  upscaleSeedvr2VaeName: "seedvr2_ema_vae_fp16.safetensors",
+  upscaleLane: "gan",
+  upscaleFit: "crop",
+  upscaleFramesPerBatch: 16,
+  upscaleCrf: 16,
+  upscalePrefix: "H3Upscale",
 } as const;
 
 const FRAME_FPS = 24;
@@ -295,8 +318,8 @@ function imageDimensions(bytes: Uint8Array): { width: number; height: number } |
 /** Read pixel dimensions and duration straight from an MP4's tkhd/mvhd boxes, so a video
  * reference can drive aspect, resolution tier and (for motion following) the take length. */
 type VideoProbe = { width?: number; height?: number; seconds?: number };
-function bytesIndexOf(haystack: Uint8Array, needle: number[]): number {
-  outer: for (let i = 0; i + needle.length <= haystack.length; i += 1) {
+function bytesIndexOf(haystack: Uint8Array, needle: number[], from = 0): number {
+  outer: for (let i = from; i + needle.length <= haystack.length; i += 1) {
     for (let j = 0; j < needle.length; j += 1) { if (haystack[i + j] !== needle[j]) continue outer; }
     return i;
   }
@@ -305,8 +328,10 @@ function bytesIndexOf(haystack: Uint8Array, needle: number[]): number {
 function mp4Probe(bytes: Uint8Array): VideoProbe {
   const probe: VideoProbe = {};
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const tkhd = bytesIndexOf(bytes, [0x74, 0x6b, 0x68, 0x64]);
-  if (tkhd >= 0) {
+  // An MP4 carries one tkhd per track (audio tracks report 0 in one dimension); the video track
+  // is the first tkhd with both dimensions non-zero, not merely the first tkhd in the file.
+  for (let tkhd = bytesIndexOf(bytes, [0x74, 0x6b, 0x68, 0x64]); tkhd >= 0 && probe.width === undefined;
+    tkhd = bytesIndexOf(bytes, [0x74, 0x6b, 0x68, 0x64], tkhd + 4)) {
     const version = bytes[tkhd + 8] ?? 0;
     const fixedOffset = version === 0 ? 76 : 96;
     if (tkhd + 8 + fixedOffset + 8 <= bytes.length) {
@@ -402,6 +427,14 @@ type GenerationSettings = {
   chainRef2va: boolean;
   chainTurbo: boolean;
   selfAnchorVoice: boolean;
+  upscaleGanModel: string;
+  upscaleSeedvr2Name: string;
+  upscaleSeedvr2VaeName: string;
+  upscaleLane: string;
+  upscaleFit: string;
+  upscaleFramesPerBatch: number;
+  upscaleCrf: number;
+  upscalePrefix: string;
 };
 
 /** The standard fl2va model chain used by single-take, chain and retake graphs. */
@@ -776,6 +809,162 @@ function buildControlGraph(args: {
   return graph;
 }
 
+// GAN lane model keys → files under models/upscale_models (manifest in docs/SETUP.md).
+const UPSCALE_GAN_FILES: Readonly<Record<string, string>> = {
+  "4x-ultrasharp": "4x-UltraSharp.pth",
+  "4x-ultrasharp-v2-lite": "4x-UltraSharpV2_Lite.safetensors",
+  "realesrgan-x4plus": "RealESRGAN_x4plus.pth",
+  "realesrgan-x2plus": "RealESRGAN_x2plus.pth",
+  animevideov3: "realesr-animevideov3.pth",
+};
+const UPSCALE_TARGET_BOXES: Readonly<Record<string, readonly [number, number]>> = { "1080p": [1920, 1080] };
+
+/** Output geometry of one upscale: a Lanczos scale step (cover-crop, aspect-exact, or contain)
+ * plus an optional even-pixel black pad that lands as the last node before saving. */
+type UpscaleGeometry = {
+  crop: "center" | "disabled";
+  scaleTo: readonly [number, number];
+  pad?: { left: number; top: number; right: number; bottom: number };
+};
+
+function evenFloor(value: number): number {
+  return Math.max(2, Math.floor(value / 2) * 2);
+}
+function evenRound(value: number): number {
+  return Math.max(2, Math.round(value / 2) * 2);
+}
+function upscaleGeometryFor(width: number, height: number, target: readonly [number, number], fit: string): UpscaleGeometry {
+  const [tw, th] = target;
+  if (fit === "crop") return { crop: "center", scaleTo: [tw, th] };
+  if (fit === "keep") {
+    // Aspect-exact: the target's long edge, short edge derived from the source ratio.
+    return width >= height
+      ? { crop: "center", scaleTo: [tw, evenRound((tw * height) / width)] }
+      : { crop: "center", scaleTo: [evenRound((th * width) / height), th] };
+  }
+  // fit === "pad": contain inside the target box, centered black bars fill the rest.
+  const scale = Math.min(tw / width, th / height);
+  const w = Math.min(tw, evenFloor(width * scale));
+  const h = Math.min(th, evenFloor(height * scale));
+  return { crop: "disabled", scaleTo: [w, h], pad: { left: (tw - w) / 2, top: (th - h) / 2, right: (tw - w) / 2, bottom: (th - h) / 2 } };
+}
+
+/** Append the fit's scale (+pad) nodes after `image`; returns the node feeding the saver. */
+function upscaleFitNodes(graph: ComfyGraph, id: string, image: [string, number], geometry: UpscaleGeometry,
+  options: { skipScale?: boolean } = {}): [string, number] {
+  let ref: [string, number] = image;
+  if (options.skipScale !== true) {
+    graph[`${id}_scale`] = {
+      class_type: "ImageScale",
+      inputs: { image: ref, upscale_method: "lanczos", width: geometry.scaleTo[0], height: geometry.scaleTo[1], crop: geometry.crop },
+    };
+    ref = [`${id}_scale`, 0];
+  }
+  if (geometry.pad !== undefined) {
+    graph[`${id}_pad`] = {
+      class_type: "ImagePadForOutpaint",
+      inputs: { image: ref, feathering: 0, ...geometry.pad },
+    };
+    ref = [`${id}_pad`, 0];
+  }
+  return ref;
+}
+
+function upscaleOutputNode(images: [string, number], audio: [string, number], settings: GenerationSettings,
+  extra: Record<string, unknown> = {}): ComfyNode {
+  return {
+    class_type: "VHS_VideoCombine",
+    inputs: {
+      images, audio, frame_rate: FRAME_FPS, loop_count: 0, filename_prefix: settings.upscalePrefix,
+      format: "video/h264-mp4", pix_fmt: "yuv420p", crf: settings.upscaleCrf, save_metadata: true,
+      trim_to_audio: false, pingpong: false, save_output: true, ...extra,
+    },
+  };
+}
+
+/**
+ * GAN lane: the upscale model runs per frame at its native factor (4x models supersample), VHS
+ * meta-batches keep VRAM flat on long takes, then one Lanczos step lands the exact target
+ * geometry. The loader's own audio rides to the saver, so the take's soundtrack survives bit-for-bit.
+ */
+function buildGanUpscaleGraph(args: { video: string; modelFile: string; geometry: UpscaleGeometry }, settings: GenerationSettings): ComfyGraph {
+  const graph: ComfyGraph = {
+    batch: { class_type: "VHS_BatchManager", inputs: { frames_per_batch: settings.upscaleFramesPerBatch } },
+    load: {
+      class_type: "VHS_LoadVideo",
+      inputs: { video: args.video, force_rate: 0, custom_width: 0, custom_height: 0, frame_load_cap: 0, skip_first_frames: 0, select_every_nth: 1, format: "None", meta_batch: ["batch", 0] },
+    },
+    umodel: { class_type: "UpscaleModelLoader", inputs: { model_name: args.modelFile } },
+    up: { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["umodel", 0], image: ["load", 0] } },
+  };
+  const images = upscaleFitNodes(graph, "fit", ["up", 0], args.geometry);
+  graph.output = upscaleOutputNode(images, ["load", 2], settings, { meta_batch: ["batch", 0] });
+  return graph;
+}
+
+/**
+ * SeedVR2 lane: ComfyUI's native one-step restoration recipe (official template wiring). The
+ * source is pre-resized to the target geometry, then Preprocess → tiled VAE → TemporalChunk
+ * (auto splitting keeps VRAM flat) → one euler/simple step at cfg 1 → tiled decode → optional
+ * color correction against the pre-resized original. Audio rides the loader like the GAN lane.
+ */
+function buildSeedvr2UpscaleGraph(args: { video: string; geometry: UpscaleGeometry; seed: number }, settings: GenerationSettings): ComfyGraph {
+  const graph: ComfyGraph = {
+    load: {
+      class_type: "VHS_LoadVideo",
+      inputs: { video: args.video, force_rate: 0, custom_width: 0, custom_height: 0, frame_load_cap: 0, skip_first_frames: 0, select_every_nth: 1, format: "None" },
+    },
+    unet: { class_type: "UNETLoader", inputs: { unet_name: settings.upscaleSeedvr2Name, weight_dtype: "default" } },
+    vae: { class_type: "VAELoader", inputs: { vae_name: settings.upscaleSeedvr2VaeName } },
+    resz: {
+      class_type: "ImageScale",
+      inputs: { image: ["load", 0], upscale_method: "lanczos", width: args.geometry.scaleTo[0], height: args.geometry.scaleTo[1], crop: args.geometry.crop },
+    },
+    prep: { class_type: "SeedVR2Preprocess", inputs: { resized_images: ["resz", 0] } },
+    enc: { class_type: "VAEEncodeTiled", inputs: { pixels: ["prep", 0], vae: ["vae", 0], tile_size: 512, overlap: 128, temporal_size: 64, temporal_overlap: 8 } },
+    chunk: { class_type: "SeedVR2TemporalChunk", inputs: { latent: ["enc", 0], temporal_overlap: 0, chunking_mode: "auto" } },
+    cond: { class_type: "SeedVR2Conditioning", inputs: { model: ["unet", 0], vae_conditioning: ["chunk", 0] } },
+    ks: {
+      class_type: "KSampler",
+      inputs: { model: ["unet", 0], positive: ["cond", 0], negative: ["cond", 1], latent_image: ["chunk", 0], seed: args.seed, steps: 1, cfg: 1, sampler_name: "euler", scheduler: "simple", denoise: 1 },
+    },
+    merge: { class_type: "SeedVR2TemporalMerge", inputs: { latents: ["ks", 0], temporal_overlap: ["chunk", 1] } },
+    dec: { class_type: "VAEDecodeTiled", inputs: { samples: ["merge", 0], vae: ["vae", 0], tile_size: 512, overlap: 128, temporal_size: 64, temporal_overlap: 8 } },
+    post: { class_type: "SeedVR2PostProcessing", inputs: { images: ["dec", 0], original_resized_images: ["resz", 0], color_correction_method: "none" } },
+  };
+  // The restoration already ran at the target geometry; only a pad (fit="pad") remains.
+  const images = upscaleFitNodes(graph, "fit", ["post", 0], args.geometry, { skipScale: true });
+  graph.output = upscaleOutputNode(images, ["load", 2], settings);
+  return graph;
+}
+
+// The native SeedVR2 chain decodes the whole take as one IMAGE tensor, so host RAM scales with
+// frames × target pixels; past this length use the GAN lane (streamed in meta-batches) or split.
+const SEEDVR2_MAX_SECONDS = 45;
+
+function upscaleSupport(request: EndpointRequest): EndpointSupport {
+  const ports = (request.constraints as unknown as GenerationRequest).ports;
+  const target = ports.target?.[0];
+  if (target !== undefined && !(String(target) in UPSCALE_TARGET_BOXES)) {
+    return { status: "unsupported", reason: `This deployment upscales to ${Object.keys(UPSCALE_TARGET_BOXES).join(", ")}, not ${String(target)}` };
+  }
+  const lane = ports.lane?.[0];
+  if (lane !== undefined && lane !== "gan" && lane !== "seedvr2") {
+    return { status: "unsupported", reason: `An upscale lane is gan or seedvr2, not ${String(lane)}` };
+  }
+  const model = ports.model?.[0];
+  if (model !== undefined && !(String(model) in UPSCALE_GAN_FILES)) {
+    return { status: "unsupported", reason: `A GAN upscale model is one of ${Object.keys(UPSCALE_GAN_FILES).join(", ")}, not ${String(model)}` };
+  }
+  const fit = ports.fit?.[0];
+  if (fit !== undefined && fit !== "crop" && fit !== "pad" && fit !== "keep") {
+    return { status: "unsupported", reason: `An upscale fit is crop, pad or keep, not ${String(fit)}` };
+  }
+  return mappingSupportsRequest(upscaleMapping, request.constraints)
+    ? { status: "supported" }
+    : { status: "unsupported", reason: "This ComfyUI deployment does not accept one of the requested upscale inputs" };
+}
+
 function retakeSupport(request: EndpointRequest): EndpointSupport {
   const ports = (request.constraints as unknown as GenerationRequest).ports;
   const start = ports.startSeconds?.[0];
@@ -884,6 +1073,14 @@ export function createComfyuiProvider(options: {
   chainRef2va?: boolean | undefined;
   chainTurbo?: boolean | undefined;
   selfAnchorVoice?: boolean | undefined;
+  upscaleGanModel?: string | undefined;
+  upscaleSeedvr2Name?: string | undefined;
+  upscaleSeedvr2VaeName?: string | undefined;
+  upscaleLane?: string | undefined;
+  upscaleFit?: string | undefined;
+  upscaleFramesPerBatch?: number | undefined;
+  upscaleCrf?: number | undefined;
+  upscalePrefix?: string | undefined;
 }) {
   const base = address(options.baseUrl);
   const fetcher = options.fetch ?? globalThis.fetch;
@@ -922,6 +1119,14 @@ export function createComfyuiProvider(options: {
     chainRef2va: options.chainRef2va ?? comfyuiDefaults.chainRef2va,
     chainTurbo: options.chainTurbo ?? comfyuiDefaults.chainTurbo,
     selfAnchorVoice: options.selfAnchorVoice ?? comfyuiDefaults.selfAnchorVoice,
+    upscaleGanModel: options.upscaleGanModel ?? comfyuiDefaults.upscaleGanModel,
+    upscaleSeedvr2Name: options.upscaleSeedvr2Name ?? comfyuiDefaults.upscaleSeedvr2Name,
+    upscaleSeedvr2VaeName: options.upscaleSeedvr2VaeName ?? comfyuiDefaults.upscaleSeedvr2VaeName,
+    upscaleLane: options.upscaleLane ?? comfyuiDefaults.upscaleLane,
+    upscaleFit: options.upscaleFit ?? comfyuiDefaults.upscaleFit,
+    upscaleFramesPerBatch: options.upscaleFramesPerBatch ?? comfyuiDefaults.upscaleFramesPerBatch,
+    upscaleCrf: options.upscaleCrf ?? comfyuiDefaults.upscaleCrf,
+    upscalePrefix: options.upscalePrefix ?? comfyuiDefaults.upscalePrefix,
   };
   const serviceSupport = serviceSupportFor(settings.refUnetName.length > 0);
   const controlSupport = controlSupportFor(settings.refUnetName.length > 0 && settings.controlPatchName.length > 0);
@@ -1034,7 +1239,8 @@ export function createComfyuiProvider(options: {
     return { wire: object(compiled.input), uploadedDimensions, uploadedVideoProbes };
   }
 
-  async function submitGraph(graph: ComfyGraph, context: EndpointStartContext, label: string): Promise<EndpointOutcome> {
+  async function submitGraph(graph: ComfyGraph, context: EndpointStartContext, label: string,
+    options: { trackVideo?: string } = {}): Promise<EndpointOutcome> {
     await context.reportProgress?.({ phase: `Submitting ComfyUI ${label} prompt` });
     const submitted = await requestJson("/prompt", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -1047,7 +1253,10 @@ export function createComfyuiProvider(options: {
     if (typeof nodeErrors === "object" && nodeErrors !== null && Object.keys(nodeErrors).length > 0) {
       throw new Error(`ComfyUI rejected the graph: ${JSON.stringify(nodeErrors).slice(0, 400)}`);
     }
-    const handle = { promptId };
+    // VHS meta-batch graphs requeue themselves under fresh prompt ids until the frames run out;
+    // trackVideo lets poll adopt the descendants instead of mistaking batch 1 for the whole job.
+    const handle: { promptId: string; trackVideo?: string } = { promptId };
+    if (options.trackVideo !== undefined) handle.trackVideo = options.trackVideo;
     await context.checkpoint?.({ handle, receipt: { id: promptId } });
     return { ...wakeAfter(handle, interval), receipt: { id: promptId } };
   }
@@ -1221,9 +1430,21 @@ export function createComfyuiProvider(options: {
     return submitGraph(graph, context, "seamless-chain");
   };
 
+  /** A queue item whose graph loads `video` through VHS_LoadVideo (matches meta-batch requeues). */
+  function queueItemLoadsVideo(item: unknown, video: string): boolean {
+    if (!Array.isArray(item) || item.length < 3 || typeof item[2] !== "object" || item[2] === null) return false;
+    return Object.values(object(item[2])).some((node) => {
+      if (typeof node !== "object" || node === null) return false;
+      const typed = object(node);
+      return typed.class_type === "VHS_LoadVideo" && object(typed.inputs ?? {}).video === video;
+    });
+  }
+
   const sharedLifecycle = {
     async poll(context: EndpointPollContext): Promise<EndpointOutcome> {
-      const promptId = text(object(context.handle).promptId);
+      const handleRecord = object(context.handle);
+      const promptId = text(handleRecord.promptId);
+      const trackVideo = typeof handleRecord.trackVideo === "string" ? handleRecord.trackVideo : undefined;
       const historyBody = await requestJson(`/history/${encodeURIComponent(promptId)}`, { signal: AbortSignal.timeout(30_000) });
       const entry: unknown = historyBody[promptId];
       if (entry === undefined || entry === null) {
@@ -1237,7 +1458,9 @@ export function createComfyuiProvider(options: {
           const position = pending.findIndex((item) => Array.isArray(item) && item[1] === promptId);
           phase = isRunning ? "rendering on the GPU" : position >= 0 ? `queued (position ${position + 1})` : phase;
         } catch { /* queue detail is cosmetic; the history answer above is the source of truth */ }
-        return wakeAfter({ promptId }, interval, Date.now(), { phase });
+        // Every continue-waiting handle must carry trackVideo forward, or a later poll can no
+        // longer adopt the meta-batch requeues of this job.
+        return wakeAfter(trackVideo !== undefined ? { promptId, trackVideo } : { promptId }, interval, Date.now(), { phase });
       }
       const record = object(entry);
       const status = object(record.status ?? {});
@@ -1246,10 +1469,23 @@ export function createComfyuiProvider(options: {
         return { status: "failed", receipt: { id: promptId }, failure: executionFailure(status) };
       }
       if (status.completed !== true) {
-        return wakeAfter({ promptId }, interval, Date.now(), { phase: "rendering on the GPU" });
+        return wakeAfter(trackVideo !== undefined ? { promptId, trackVideo } : { promptId }, interval, Date.now(), { phase: "rendering on the GPU" });
       }
       const file = findVideoOutput(object(record.outputs ?? {}));
       if (file === undefined) {
+        // A VHS meta-batch run completes per batch without final media; the remaining batches sit
+        // in the queue under fresh prompt ids loading the same uploaded video — adopt and follow.
+        if (trackVideo !== undefined) {
+          try {
+            const queue = await requestJson("/queue", { signal: AbortSignal.timeout(15_000) });
+            const items = [...(Array.isArray(queue.queue_running) ? queue.queue_running : []),
+              ...(Array.isArray(queue.queue_pending) ? queue.queue_pending : [])];
+            const descendant = items.find((item) => queueItemLoadsVideo(item, trackVideo));
+            if (descendant !== undefined && Array.isArray(descendant) && typeof descendant[1] === "string") {
+              return wakeAfter({ promptId: descendant[1], trackVideo }, interval, Date.now(), { phase: "meta-batch continuing on the GPU" });
+            }
+          } catch { /* queue detail is cosmetic; the no-video answer below is the source of truth */ }
+        }
         // A completed prompt without saved media is a contract violation, not a pending job.
         throw new Error(`ComfyUI prompt ${promptId} completed without a saved video output`);
       }
@@ -1272,12 +1508,26 @@ export function createComfyuiProvider(options: {
     },
 
     async cancel(context: EndpointPollContext) {
-      // Best effort: drop the prompt from the queue, then interrupt whatever is executing.
-      const promptId = text(object(context.handle).promptId);
+      // Best effort: drop the prompt (plus any meta-batch requeues) from the queue, then
+      // interrupt whatever is executing.
+      const handleRecord = object(context.handle);
+      const promptId = text(handleRecord.promptId);
+      const trackVideo = typeof handleRecord.trackVideo === "string" ? handleRecord.trackVideo : undefined;
       try {
+        const deletes: string[] = [promptId];
+        if (trackVideo !== undefined) {
+          try {
+            const queue = await requestJson("/queue", { signal: AbortSignal.timeout(15_000) });
+            const items = [...(Array.isArray(queue.queue_running) ? queue.queue_running : []),
+              ...(Array.isArray(queue.queue_pending) ? queue.queue_pending : [])];
+            for (const item of items) {
+              if (queueItemLoadsVideo(item, trackVideo) && Array.isArray(item) && typeof item[1] === "string") deletes.push(item[1]);
+            }
+          } catch { /* queue listing is best effort */ }
+        }
         await fetcher(`${base}/queue`, {
           method: "DELETE", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ delete: [promptId] }), signal: AbortSignal.timeout(15_000),
+          body: JSON.stringify({ delete: deletes }), signal: AbortSignal.timeout(15_000),
         });
         await fetcher(`${base}/interrupt`, { method: "POST", signal: AbortSignal.timeout(15_000) });
       } catch { /* cancellation stays best effort; poll reports the real state */ }
@@ -1356,6 +1606,67 @@ export function createComfyuiProvider(options: {
   };
   const controlEndpoint: AsyncEndpoint = { start: controlStart, ...sharedLifecycle };
 
+  // The current option list of one node input (a COMBO's filenames); used to prove a weight is
+  // visible to ComfyUI before any GPU time is spent on it. Inputs come in two shapes:
+  // [["a.pth"], {...}] (UNETLoader) and ["COMBO", {options: [...]}] (UpscaleModelLoader).
+  async function comboOptions(nodeName: string, inputName: string): Promise<readonly unknown[]> {
+    const response = object(await requestJson(`/object_info/${encodeURIComponent(nodeName)}`, { signal: AbortSignal.timeout(15_000) }));
+    const entry = object(object(object(response[nodeName]).input).required)[inputName];
+    if (!Array.isArray(entry)) return [];
+    if (Array.isArray(entry[0])) return entry[0];
+    const options = entry.length > 1 && typeof entry[1] === "object" && entry[1] !== null
+      ? object(entry[1]).options : undefined;
+    return Array.isArray(options) ? options : [];
+  }
+
+  const upscaleStart = async (context: EndpointStartContext): Promise<EndpointOutcome> => {
+    const supported = upscaleSupport(context.need);
+    if (supported.status === "unsupported") throw new Error(supported.reason);
+    const authored = context.need.constraints as unknown as GenerationRequest;
+    await context.reportProgress?.({ phase: "Uploading the source video to ComfyUI" });
+    const { wire, uploadedVideoProbes } = await compileWithUploads(context, upscaleMapping, authored);
+    const video = text(wire.source);
+    const lane = optionalText(wire.lane) ?? settings.upscaleLane;
+    const fit = optionalText(wire.fit) ?? settings.upscaleFit;
+    const target = optionalText(wire.target) ?? "1080p";
+    const box = UPSCALE_TARGET_BOXES[target];
+    if (box === undefined) throw new Error(`An upscale target is ${Object.keys(UPSCALE_TARGET_BOXES).join(", ")}, not ${target}`);
+    // cover-crop needs no source dimensions; aspect-exact (keep) and pad derive from the probe.
+    const probe = uploadedVideoProbes.get(video);
+    if (fit !== "crop" && (probe?.width === undefined || probe.height === undefined)) {
+      throw new Error(`fit="${fit}" needs the source's pixel dimensions and this file's MP4 header did not yield them; use fit="crop"`);
+    }
+    const geometry = upscaleGeometryFor(probe?.width ?? box[0], probe?.height ?? box[1], box, fit);
+    const seconds = probe?.seconds;
+    if (lane === "seedvr2") {
+      if (seconds !== undefined && seconds > SEEDVR2_MAX_SECONDS) {
+        throw new Error(`The SeedVR2 lane restores the whole take in host RAM and stays under ~${SEEDVR2_MAX_SECONDS}s (this source is ${seconds.toFixed(0)}s); use lane="gan" or split the take`);
+      }
+      const unetList = await comboOptions("UNETLoader", "unet_name");
+      if (!unetList.includes(settings.upscaleSeedvr2Name)) {
+        throw new Error(`The SeedVR2 checkpoint ${settings.upscaleSeedvr2Name} is not visible to ComfyUI yet (still downloading or not installed)`);
+      }
+      const vaeList = await comboOptions("VAELoader", "vae_name");
+      if (!vaeList.includes(settings.upscaleSeedvr2VaeName)) {
+        throw new Error(`The SeedVR2 VAE ${settings.upscaleSeedvr2VaeName} is not visible to ComfyUI yet (still downloading or not installed)`);
+      }
+      await context.reportProgress?.({ phase: `SeedVR2 restoration to ${box[0]}×${box[1]} (fit=${fit}) on the GPU` });
+      const graph = buildSeedvr2UpscaleGraph({ video, geometry, seed: Math.floor(Math.random() * 2 ** 31) }, settings);
+      return submitGraph(graph, context, "upscale-seedvr2");
+    }
+    const modelKey = optionalText(wire.model) ?? settings.upscaleGanModel;
+    const modelFile = UPSCALE_GAN_FILES[modelKey];
+    if (modelFile === undefined) throw new Error(`A GAN upscale model is one of ${Object.keys(UPSCALE_GAN_FILES).join(", ")}, not ${modelKey}`);
+    const modelList = await comboOptions("UpscaleModelLoader", "model_name");
+    if (!modelList.includes(modelFile)) {
+      throw new Error(`The upscale model ${modelFile} is not visible to ComfyUI yet (still downloading or not installed)`);
+    }
+    await context.reportProgress?.({ phase: `GAN upscale ${modelKey} to ${box[0]}×${box[1]} (fit=${fit}, ${settings.upscaleFramesPerBatch}-frame batches) on the GPU` });
+    const graph = buildGanUpscaleGraph({ video, modelFile, geometry }, settings);
+    return submitGraph(graph, context, "upscale-gan", { trackVideo: video });
+  };
+  const upscaleEndpoint: AsyncEndpoint = { start: upscaleStart, ...sharedLifecycle };
+
   return defineEndpointPackage({
     module: providerModule, facet: "video", instance: options.instance, pool: options.pool,
     defaultConcurrency: options.concurrency ?? comfyuiDefaults.concurrency,
@@ -1367,6 +1678,7 @@ export function createComfyuiProvider(options: {
         supports: chainSupportFor(configuredChainEngine), endpoint: chainTakeEndpoint },
       { capability: retakeCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: retakeSupport, endpoint: retakeEndpoint },
       { capability: controlCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: controlSupport, endpoint: controlEndpoint },
+      { capability: upscaleCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: upscaleSupport, endpoint: upscaleEndpoint },
     ],
   });
 }

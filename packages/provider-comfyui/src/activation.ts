@@ -15,6 +15,8 @@ const CONFIG_KEYS = [
   "filenamePrefix", "unetName", "loraName", "clipName", "videoVaeName", "audioVaeName", "useSolAttn",
   "chainEngine", "refUnetName", "refLoraName", "refTurbo", "refTurboSteps", "refSteps", "refSampler", "refScheduler", "refSolAttn", "refSolAttnTau", "refSolAttnStart", "refSolAttnEnd", "refSolAttnInt8Pv",
   "controlPatchName", "allowAuto2K", "chainRef2va", "chainTurbo", "selfAnchorVoice",
+  "upscaleGanModel", "upscaleSeedvr2Name", "upscaleSeedvr2VaeName", "upscaleLane", "upscaleFit",
+  "upscaleFramesPerBatch", "upscaleCrf", "upscalePrefix",
 ];
 
 export default {
@@ -59,6 +61,14 @@ export default {
         chainRef2va: runtimeConfigBoolean(config.chainRef2va, "ComfyUI chainRef2va"),
         chainTurbo: runtimeConfigBoolean(config.chainTurbo, "ComfyUI chainTurbo"),
         selfAnchorVoice: runtimeConfigBoolean(config.selfAnchorVoice, "ComfyUI selfAnchorVoice"),
+        upscaleGanModel: runtimeConfigString(config.upscaleGanModel, "ComfyUI upscaleGanModel"),
+        upscaleSeedvr2Name: runtimeConfigString(config.upscaleSeedvr2Name, "ComfyUI upscaleSeedvr2Name"),
+        upscaleSeedvr2VaeName: runtimeConfigString(config.upscaleSeedvr2VaeName, "ComfyUI upscaleSeedvr2VaeName"),
+        upscaleLane: runtimeConfigString(config.upscaleLane, "ComfyUI upscaleLane"),
+        upscaleFit: runtimeConfigString(config.upscaleFit, "ComfyUI upscaleFit"),
+        upscaleFramesPerBatch: runtimeConfigPositiveInteger(config.upscaleFramesPerBatch, "ComfyUI upscaleFramesPerBatch"),
+        upscaleCrf: runtimeConfigPositiveInteger(config.upscaleCrf, "ComfyUI upscaleCrf"),
+        upscalePrefix: runtimeConfigString(config.upscalePrefix, "ComfyUI upscalePrefix"),
       }) };
     },
   })],

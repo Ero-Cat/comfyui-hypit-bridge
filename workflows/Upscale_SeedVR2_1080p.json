@@ -1,0 +1,25 @@
+{
+  "load": {
+    "class_type": "VHS_LoadVideo",
+    "inputs": { "video": "SOURCE.mp4", "force_rate": 0, "custom_width": 0, "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0, "select_every_nth": 1, "format": "None" }
+  },
+  "unet": { "class_type": "UNETLoader", "inputs": { "unet_name": "seedvr2_3b_int8_convrot.safetensors", "weight_dtype": "default" } },
+  "vae": { "class_type": "VAELoader", "inputs": { "vae_name": "seedvr2_ema_vae_fp16.safetensors" } },
+  "resz": { "class_type": "ImageScale", "inputs": { "image": ["load", 0], "upscale_method": "lanczos", "width": 1920, "height": 1080, "crop": "center" } },
+  "prep": { "class_type": "SeedVR2Preprocess", "inputs": { "resized_images": ["resz", 0] } },
+  "enc": { "class_type": "VAEEncodeTiled", "inputs": { "pixels": ["prep", 0], "vae": ["vae", 0], "tile_size": 512, "overlap": 128, "temporal_size": 64, "temporal_overlap": 8 } },
+  "chunk": { "class_type": "SeedVR2TemporalChunk", "inputs": { "latent": ["enc", 0], "temporal_overlap": 0, "chunking_mode": "auto" } },
+  "cond": { "class_type": "SeedVR2Conditioning", "inputs": { "model": ["unet", 0], "vae_conditioning": ["chunk", 0] } },
+  "ks": { "class_type": "KSampler", "inputs": { "model": ["unet", 0], "positive": ["cond", 0], "negative": ["cond", 1], "latent_image": ["chunk", 0], "seed": 42, "steps": 1, "cfg": 1, "sampler_name": "euler", "scheduler": "simple", "denoise": 1 } },
+  "merge": { "class_type": "SeedVR2TemporalMerge", "inputs": { "latents": ["ks", 0], "temporal_overlap": ["chunk", 1] } },
+  "dec": { "class_type": "VAEDecodeTiled", "inputs": { "samples": ["merge", 0], "vae": ["vae", 0], "tile_size": 512, "overlap": 128, "temporal_size": 64, "temporal_overlap": 8 } },
+  "post": { "class_type": "SeedVR2PostProcessing", "inputs": { "images": ["dec", 0], "original_resized_images": ["resz", 0], "color_correction_method": "none" } },
+  "output": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["post", 0], "audio": ["load", 2], "frame_rate": 24, "loop_count": 0,
+      "filename_prefix": "H3Upscale", "format": "video/h264-mp4", "pix_fmt": "yuv420p", "crf": 16,
+      "save_metadata": true, "trim_to_audio": false, "pingpong": false, "save_output": true
+    }
+  }
+}

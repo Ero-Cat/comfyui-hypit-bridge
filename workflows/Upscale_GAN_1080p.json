@@ -1,0 +1,18 @@
+{
+  "batch": { "class_type": "VHS_BatchManager", "inputs": { "frames_per_batch": 16 } },
+  "load": {
+    "class_type": "VHS_LoadVideo",
+    "inputs": { "video": "SOURCE.mp4", "force_rate": 0, "custom_width": 0, "custom_height": 0, "frame_load_cap": 0, "skip_first_frames": 0, "select_every_nth": 1, "format": "None", "meta_batch": ["batch", 0] }
+  },
+  "umodel": { "class_type": "UpscaleModelLoader", "inputs": { "model_name": "4x-UltraSharp.pth" } },
+  "up": { "class_type": "ImageUpscaleWithModel", "inputs": { "upscale_model": ["umodel", 0], "image": ["load", 0] } },
+  "fit_scale": { "class_type": "ImageScale", "inputs": { "image": ["up", 0], "upscale_method": "lanczos", "width": 1920, "height": 1080, "crop": "center" } },
+  "output": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["fit_scale", 0], "audio": ["load", 2], "frame_rate": 24, "loop_count": 0,
+      "filename_prefix": "H3Upscale", "format": "video/h264-mp4", "pix_fmt": "yuv420p", "crf": 16,
+      "save_metadata": true, "trim_to_audio": false, "pingpong": false, "save_output": true, "meta_batch": ["batch", 0]
+    }
+  }
+}

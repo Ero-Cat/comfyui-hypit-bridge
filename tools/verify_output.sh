@@ -3,8 +3,10 @@
 #
 # 用法:
 #   bash tools/verify_output.sh <output.mp4> [--expect-script <新台词文本>]
+#       [--expect-res WxH] [--expect-fps N]
 # 示例:
 #   bash tools/verify_output.sh out.mp4 --expect-script new-script.txt
+#   bash tools/verify_output.sh out-1080p.mp4 --expect-res 1920x1080 --expect-fps 24
 set -euo pipefail
 
 WHISPER=${WHISPER:-/opt/homebrew/opt/whisper.cpp/bin/whisper-cli}
@@ -17,9 +19,13 @@ fi
 
 OUT=$1; shift
 EXPECT=""
+EXPECT_RES=""
+EXPECT_FPS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --expect-script) EXPECT=$2; shift 2 ;;
+    --expect-res) EXPECT_RES=$2; shift 2 ;;
+    --expect-fps) EXPECT_FPS=$2; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -28,6 +34,24 @@ TMP=$(mktemp -d)
 echo "=== 规格 ==="
 ffprobe -v error -show_entries format=duration -show_entries stream=codec_type,codec_name,width,height \
   -of default=noprint_wrappers=1 "$OUT"
+
+if [[ -n "$EXPECT_RES" ]]; then
+  RES=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$OUT")
+  if [[ "$RES" == "$(echo "$EXPECT_RES" | tr 'x' ',')" ]]; then
+    echo "✅ 分辨率 ${EXPECT_RES}"
+  else
+    echo "❌ 分辨率 ${RES} ≠ 预期 ${EXPECT_RES}"; exit 1
+  fi
+fi
+if [[ -n "$EXPECT_FPS" ]]; then
+  FPS=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of default=noprint_wrappers=1:nokey=1 "$OUT")
+  FPS_NUM=$(python3 -c "print(round(eval('$FPS')))")
+  if [[ "$FPS_NUM" == "$EXPECT_FPS" ]]; then
+    echo "✅ 帧率 ${EXPECT_FPS} fps"
+  else
+    echo "❌ 帧率 ${FPS_NUM} ≠ 预期 ${EXPECT_FPS}"; exit 1
+  fi
+fi
 
 echo "=== 水印检测（输出自身的静态叠加扫描） ==="
 python3 "$PWD/tools/watermark_detect.py" "$OUT" | tee "$TMP/wm.json"

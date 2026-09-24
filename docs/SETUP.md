@@ -19,7 +19,7 @@ for pkg in packages/*/; do
 done
 
 # Install into project root
-npm install ./packages/provider-comfyui ./packages/model-h3-chain ./packages/model-h3-retake ./packages/model-h3-control
+npm install ./packages/provider-comfyui ./packages/model-h3-chain ./packages/model-h3-retake ./packages/model-h3-control ./packages/model-h3-upscale
 ```
 
 ## Step 2: Configure your ComfyUI endpoint
@@ -56,6 +56,25 @@ Required weights on your ComfyUI machine:
 | `minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors` | `models/loras/` | ~1.9 GB |
 
 Download from [Comfy-Org/MiniMax-H3 on HuggingFace](https://huggingface.co/Comfy-Org/MiniMax-H3).
+
+## Step 3b: Download 1080P upscaling weights (post-process lanes)
+
+Upscaling runs as a post-process on finished takes (`<h3up:UpscaleVideo>`); neither lane needs a
+new custom node on ComfyUI 0.36+ (SeedVR2 nodes are native; the GAN lane is core nodes + VHS).
+Model choice follows content: 写实/3D 渲染 → `4x-ultrasharp`，2D 平涂动画 → `animevideov3`。
+
+| Weight | Location | Size | Lane |
+| --- | --- | --- | --- |
+| `4x-UltraSharp.pth` | `models/upscale_models/` | ~67 MB | gan 默认（镜像: HF `philz1337x/upscaler`） |
+| `4x-UltraSharpV2_Lite.safetensors` | `models/upscale_models/` | ~30 MB | gan 轻量备选 |
+| `RealESRGAN_x4plus.pth` / `RealESRGAN_x2plus.pth` | `models/upscale_models/` | ~67 MB each | gan（BSD-3 宽松协议） |
+| `realesr-animevideov3.pth` | `models/upscale_models/` | ~2.4 MB | gan（2D 动画防闪烁） |
+| `seedvr2_3b_int8_convrot.safetensors` | `models/diffusion_models/` | ~3.5 GB | seedvr2 质量档 |
+| `seedvr2_ema_vae_fp16.safetensors` | `models/vae/` | ~0.5 GB | seedvr2 质量档 |
+
+SeedVR2 下载自 [Comfy-Org/SeedVR2](https://huggingface.co/Comfy-Org/SeedVR2)（hf-mirror 直连可用），
+Real-ESRGAN 系自 [Real-ESRGAN releases](https://github.com/xinntao/Real-ESRGAN/releases)。新模型文件
+放入后 ComfyUI 免重启自动可见（object_info 实测 2026-09-24）。
 
 ## Step 4: Install ComfyUI custom nodes
 
