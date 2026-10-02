@@ -1,8 +1,8 @@
 {
  "id": "h3-seamless-chain-core",
  "revision": 0,
- "last_node_id": 13,
- "last_link_id": 13,
+ "last_node_id": 14,
+ "last_link_id": 14,
  "nodes": [
   {
    "id": 1,
@@ -155,7 +155,7 @@
     "Node name for S&R": "H3ClipLoaderAny"
    },
    "widgets_values": [
-    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
     "minimax"
    ]
   },
@@ -181,7 +181,7 @@
      "name": "model",
      "type": "MODEL",
      "links": [
-      2
+      14
      ],
      "slot_index": 0
     }
@@ -576,6 +576,48 @@
    "color": "#432",
    "bgcolor": "#653",
    "title": "MiniMax-H3 Multishot v2.6.1 - links"
+  },
+  {
+   "id": 14,
+   "type": "EasyCache",
+   "pos": [
+    -700,
+    -200
+   ],
+   "size": [
+    270,
+    130
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      2
+     ],
+     "slot_index": 0
+    }
+   ],
+   "title": "EasyCache (step cache)",
+   "properties": {
+    "Node name for S&R": "EasyCache"
+   },
+   "widgets_values": [
+    0.2,
+    0.15,
+    0.95,
+    false
+   ]
   }
  ],
  "links": [
@@ -589,7 +631,7 @@
   ],
   [
    2,
-   5,
+   14,
    0,
    8,
    0,
@@ -682,6 +724,14 @@
    11,
    0,
    "VIDEO"
+  ],
+  [
+   14,
+   5,
+   0,
+   14,
+   0,
+   "MODEL"
   ]
  ],
  "groups": [

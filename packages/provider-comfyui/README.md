@@ -29,8 +29,8 @@ patch 权重对 ComfyUI 可见（`/object_info`），下载未完成时明确报
 | 纯文本（T2V）、首帧图、参考图/声音锚 | 无缝链采样单镜头 | `H3MultishotSampler`（ComfyUI-H3-Multishot 包） |
 | 带尾帧（首帧可选，FL2VA 本职） | 原生首尾帧路径 | `MiniMaxH3ImageToVideo` + `SamplerCustomAdvanced` |
 
-两条模板共用部署配置：FL2VA int8-convrot 权重 → fl2v turbo 8-step LoRA → SolAttnPatch（你的
-euler/beta/8 步参数），输出经 `VHS_VideoCombine` 合成 h264+AAC mp4（24 fps），再回收到 Hypit Result。
+两条模板共用部署配置：FL2VA int8-convrot 权重 → fl2v turbo 8-step LoRA → SolAttnPatch → EasyCache
+（你的 euler/beta/8 步参数），输出经 `VHS_VideoCombine` 合成 h264+AAC mp4（24 fps），再回收到 Hypit Result。
 
 ## 端口映射与限制（`supports` 如实上报）
 
@@ -66,10 +66,13 @@ euler/beta/8 步参数），输出经 `VHS_VideoCombine` 合成 h264+AAC mp4（2
 
 可覆盖配置项（均有部署默认值）：`steps`、`sampler`、`scheduler`、`crf`、`filenamePrefix`、
 `unetName`、`loraName`（设为 `""` 可关掉 LoRA 节点）、`clipName`、`videoVaeName`、`audioVaeName`、
-`useSolAttn`、`chainEngine`（`auto`/`infinite`/`multishot`，链式能力的引擎路由）、
+`useSolAttn`、`useEasyCache`/`easyCacheThreshold`（2026-09-28 默认启用：原生 EasyCache 步进缓存挂在
+SolAttn 之外层，8 步 turbo 实测口径 ~-21% 时长，20 步质量档收益更大；SeedVR2 超分单步采样天然不触发）、
+`chainEngine`（`auto`/`infinite`/`multishot`，链式能力的引擎路由）、
 `refUnetName`（ref2va 权重名，设 `""` 关闭视频参考）、`refLoraName`、`refTurbo`（true=ref2v 4步
 turbo LoRA，5× 快但 v0.1 质量）、`refSteps`/`refSampler`/`refScheduler`（默认官方档
-20/res_multistep/simple）。
+20/res_multistep/simple）、`ltxUnetName`/`ltxClipName`/`ltxVideoVaeName`/`ltxAudioVaeName`/
+`ltxUpscalerName`/`ltxPrefix`（LTX-2.5 通道，2026-10-01；换官方 Lightricks 档只改前两个键）。
 
 ## 自动参数推导（2026-09-22）
 
@@ -108,6 +111,27 @@ turbo LoRA，5× 快但 v0.1 质量）、`refSteps`/`refSampler`/`refScheduler`�
 时长语义：无限窗可选 **19/27/36/44/53/61/70/78/87s**（N 窗=204N+39 帧，supports 阶段如实拒绝
 其余值）；无缝链 16–90s 任意（每窗 ≤362 帧，帧数向上取 17k+5 格网）。其余限制同单镜头
 （referenceVideo 拒绝、768P/2K、局域网地址策略、并发 1）。
+
+## LTX-2.5 能力（`@local/ltx-video@1#ltx-video`，2026-10-01）
+
+单镜头**音视频联合**生成（4–10s），SVML 元素 `<ltx:GenVideo prompt duration resolution
+aspect-ratio first-frame>`。图 = ComfyUI-GGUF-Loader 包的 `LTXV25*` 节点链，官方两段式配方：
+
+```
+LTXV25ModelsLoader(DiT+Gemma-4编码器+双VAE 四合一) + LatentUpscaleModelLoader
+→ LTXV25ImgToVideo(t2v/i2v；一采 latent 在半分辨率) → LTXV25KSampler("distilled (8 steps)")
+→ LTXV25LatentUpscale(x2 空间；i2v 时以 strength 1.0 重锁首帧)
+→ LTXV25KSampler("refine (3 steps)") → LTXV25AVDecode(音画合流 VIDEO) → SaveVideo
+```
+
+硬约束（supports/build 阶段强制）：宽高只走 **1280×768 / 768×1280**（%64 格网，半分辨率一采
+需要 %32）；帧数向上取 **8k+1**（97/121/…/241 @24fps）；时长 4–10s；首帧在节点内自行居中裁切，
+不做上游缩放；i2v 未声明画幅时跟首帧方向。采样计划是节点预设（sigma 固定、双 CFG=1），
+负提示词留空。提交前逐项校验四个权重 + 上采样器对 ComfyUI 可见（半下载状态明确报错）。
+
+档位（均已装机，runtime Profile 四键切换）：**官方 distilled int8 全套（当前默认，ModelScope
+镜像安装免 token，2026-10-01 三发冒烟通过）**；uncensored v1.1（ChrisColeTech，DiT 尾段守夜人
+接力中）。契约细节见 `.zcode/skills/ltx-video/SKILL.md`。
 
 ## 重新构建
 

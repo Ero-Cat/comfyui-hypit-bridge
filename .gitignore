@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 packages/*/node_modules/
+.venv/
 
 # Generated outputs & large media
 output/

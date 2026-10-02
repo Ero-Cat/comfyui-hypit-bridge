@@ -76,6 +76,36 @@ SeedVR2 下载自 [Comfy-Org/SeedVR2](https://huggingface.co/Comfy-Org/SeedVR2)�
 Real-ESRGAN 系自 [Real-ESRGAN releases](https://github.com/xinntao/Real-ESRGAN/releases)。新模型文件
 放入后 ComfyUI 免重启自动可见（object_info 实测 2026-09-24）。
 
+## Step 3c: Download LTX-2.5 weights (uncensored lane, 2026-10-01)
+
+LTX-2.5 单镜头音视频联合生成（`<ltx:GenVideo>`，4–10s）。默认档是 **ChrisColeTech
+uncensored v1.1** split pack（ungated，一个仓库配齐；Eros10 + DMD 蒸馏 + 官方 IC-LoRA +
+Img2Vid 适配器烘入权重）：
+
+| Weight | Location | Size |
+| --- | --- | --- |
+| `ltx25_uncensored_v1.1-fp8_scaled.safetensors` | `models/diffusion_models/` | ~21.5 GB |
+| `gemma4_12b_ltx25_uncensored-int8.safetensors` | `models/text_encoders/` | ~13.2 GB |
+| `ltx25_uncensored_video_vae.safetensors` | `models/vae/` | ~1.5 GB |
+| `ltx25_uncensored_audio_vae.safetensors` | `models/vae/` | ~0.4 GB |
+| `ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors` | `models/latent_upscale_models/` | ~1.0 GB |
+| `ltx-2.5-latent-temporal-upscaler-x2-bf16-1.0.safetensors` | `models/latent_upscale_models/` | ~0.3 GB |
+
+下载自 [ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8](https://huggingface.co/ChrisColeTech/LTX-2.5-uncensored-v1.1-FP8)
+（`split/` 子目录）；用 `tools/download-ltx25.ps1` 10 路并行分段下载（幂等，.ok 标记）。
+路由注意：hf-mirror 的 `/resolve` 现在 308 回源 huggingface.co，5090 机器可直穿
+HF→US CDN（实测可用，但**晚高峰跨境拥塞**，见 PATCHES.md 2026-10-01 节；aria2 配方更快）。
+
+**官方档（已装，当前默认）**：`ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors`（21.5 GB）+
+`gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors`（15.4 GB）+ 官方双 VAE + duration head。
+**下载源用 ModelScope 镜像（免门槛、国内 CDN、实测 aria2 100MB/s）**：
+`https://modelscope.cn/models/Lightricks/LTX-2.5/resolve/master/<路径>`（配方
+`tools/aria2-ltx25-official.ps1`）——无需 HF token。
+
+配置键（`hypit.runtime.json` → `comfyui.5090.config`，当前指向官方档）：`ltxUnetName` /
+`ltxClipName` / `ltxVideoVaeName` / `ltxAudioVaeName` / `ltxUpscalerName` / `ltxPrefix`；
+切 uncensored 档改前四个键即可。
+
 ## Step 4: Install ComfyUI custom nodes
 
 On your ComfyUI machine:
@@ -92,6 +122,9 @@ git clone https://github.com/jlucasmcrell/ComfyUI-H3-Multishot
 # For watermark removal (optional)
 git clone https://github.com/Acly/comfyui-inpaint-nodes
 git clone https://github.com/daniabib/ComfyUI_ProPainter_Nodes
+
+# For LTX-2.5 (LTXV25* loader/sampler/AV-decode nodes; pip dep gguf>=0.13 already in venv)
+git clone https://github.com/ChrisColeTech/ComfyUI-GGUF-Loader
 ```
 
 ## Step 5: Verify connection

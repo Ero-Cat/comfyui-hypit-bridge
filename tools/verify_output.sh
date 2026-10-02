@@ -54,7 +54,9 @@ if [[ -n "$EXPECT_FPS" ]]; then
 fi
 
 echo "=== 水印检测（输出自身的静态叠加扫描） ==="
-python3 "$PWD/tools/watermark_detect.py" "$OUT" | tee "$TMP/wm.json"
+DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$OUT")
+WM_INTERVAL=$(python3 -c "print(max(1, min(6, int(float('$DUR') / 6))))")
+python3 "$PWD/tools/watermark_detect.py" "$OUT" --interval "$WM_INTERVAL" | tee "$TMP/wm.json"
 REGIONS=$(python3 -c "import json;print(len(json.load(open('$TMP/wm.json'))['regions']))")
 if [[ "$REGIONS" == "0" ]]; then echo "✅ 无静态水印/字幕残留"; else echo "⚠️ 检出 ${REGIONS} 个静态区域（人工确认是否误报：静止背景也会命中）"; fi
 

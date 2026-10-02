@@ -13,10 +13,12 @@ function configNumber(value: unknown, subject: string): number | undefined {
 const CONFIG_KEYS = [
   "baseUrl", "concurrency", "pollIntervalMs", "steps", "sampler", "scheduler", "crf",
   "filenamePrefix", "unetName", "loraName", "clipName", "videoVaeName", "audioVaeName", "useSolAttn",
+  "useEasyCache", "easyCacheThreshold", "useSpectrum",
   "chainEngine", "refUnetName", "refLoraName", "refTurbo", "refTurboSteps", "refSteps", "refSampler", "refScheduler", "refSolAttn", "refSolAttnTau", "refSolAttnStart", "refSolAttnEnd", "refSolAttnInt8Pv",
   "controlPatchName", "allowAuto2K", "chainRef2va", "chainTurbo", "selfAnchorVoice",
   "upscaleGanModel", "upscaleSeedvr2Name", "upscaleSeedvr2VaeName", "upscaleLane", "upscaleFit",
   "upscaleFramesPerBatch", "upscaleCrf", "upscalePrefix",
+  "ltxUnetName", "ltxClipName", "ltxVideoVaeName", "ltxAudioVaeName", "ltxUpscalerName", "ltxPrefix",
 ];
 
 export default {
@@ -38,11 +40,16 @@ export default {
         filenamePrefix: runtimeConfigString(config.filenamePrefix, "ComfyUI filenamePrefix"),
         crf: runtimeConfigPositiveInteger(config.crf, "ComfyUI crf"),
         unetName: runtimeConfigString(config.unetName, "ComfyUI unetName"),
-        loraName: runtimeConfigString(config.loraName, "ComfyUI loraName"),
+        // Empty string is the documented "disable the turbo LoRA node" override (README); the graph
+        // builder skips the node, so validation must let it through instead of demanding non-empty.
+        loraName: typeof config.loraName === "string" ? config.loraName : runtimeConfigString(config.loraName, "ComfyUI loraName"),
         clipName: runtimeConfigString(config.clipName, "ComfyUI clipName"),
         videoVaeName: runtimeConfigString(config.videoVaeName, "ComfyUI videoVaeName"),
         audioVaeName: runtimeConfigString(config.audioVaeName, "ComfyUI audioVaeName"),
         useSolAttn: runtimeConfigBoolean(config.useSolAttn, "ComfyUI useSolAttn"),
+        useEasyCache: runtimeConfigBoolean(config.useEasyCache, "ComfyUI useEasyCache"),
+        useSpectrum: runtimeConfigBoolean(config.useSpectrum, "ComfyUI useSpectrum"),
+        easyCacheThreshold: configNumber(config.easyCacheThreshold, "ComfyUI easyCacheThreshold"),
         chainEngine: runtimeConfigString(config.chainEngine, "ComfyUI chainEngine"),
         refUnetName: runtimeConfigString(config.refUnetName, "ComfyUI refUnetName"),
         refLoraName: runtimeConfigString(config.refLoraName, "ComfyUI refLoraName"),
@@ -69,6 +76,12 @@ export default {
         upscaleFramesPerBatch: runtimeConfigPositiveInteger(config.upscaleFramesPerBatch, "ComfyUI upscaleFramesPerBatch"),
         upscaleCrf: runtimeConfigPositiveInteger(config.upscaleCrf, "ComfyUI upscaleCrf"),
         upscalePrefix: runtimeConfigString(config.upscalePrefix, "ComfyUI upscalePrefix"),
+        ltxUnetName: runtimeConfigString(config.ltxUnetName, "ComfyUI ltxUnetName"),
+        ltxClipName: runtimeConfigString(config.ltxClipName, "ComfyUI ltxClipName"),
+        ltxVideoVaeName: runtimeConfigString(config.ltxVideoVaeName, "ComfyUI ltxVideoVaeName"),
+        ltxAudioVaeName: runtimeConfigString(config.ltxAudioVaeName, "ComfyUI ltxAudioVaeName"),
+        ltxUpscalerName: runtimeConfigString(config.ltxUpscalerName, "ComfyUI ltxUpscalerName"),
+        ltxPrefix: runtimeConfigString(config.ltxPrefix, "ComfyUI ltxPrefix"),
       }) };
     },
   })],

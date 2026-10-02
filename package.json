@@ -8,6 +8,7 @@
     "@local/h3-control": "file:packages/model-h3-control",
     "@local/h3-retake": "file:packages/model-h3-retake",
     "@local/h3-upscale": "file:packages/model-h3-upscale",
+    "@local/ltx-video": "file:packages/model-ltx-video",
     "provider-comfyui": "file:packages/provider-comfyui"
   }
 }

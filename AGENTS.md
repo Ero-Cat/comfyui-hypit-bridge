@@ -19,10 +19,18 @@ hypit doctor --endpoint comfyui.5090       # 检查 provider 激活状态
 
 # ComfyUI 工作流同步（workflows/ 是本地权威源）
 bash tools/sync_workflows.sh push|pull|status
+
+# 成片音频体检（多窗接缝三指标 + 模型加词审计；详见 .zcode/skills/h3-av-contract）
+python3 tools/audio_seam_check.py <out.mp4> --seam 8.0 --budget 4.5
 ```
 
 当前 Runtime 端点为 `comfyui.5090`（配置在 `hypit.runtime.json`，已 gitignore）。
-Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链式引擎**按声线需求选**：
+Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。**2026-09-28 起**：① 全部 H3 模型链
+默认挂原生 **EasyCache** 步进缓存（Profile 键 `useEasyCache:true`/`easyCacheThreshold:0.2`，挂在
+SolAttn 外层；采样日志报 `EasyCache - skipped X/Y steps (Zx speedup)`；GAN 超分无 MODEL、SeedVR2
+单步采样，两者天然不适用）；② 文本编码器换装 **`qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors`**
+（gitcode 分发 15.68GB；旧 `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` 保留在 `text_encoders/`
+作回滚，Profile `clipName` 可切回）。链式引擎**按声线需求选**：
 台词声线必须跟参考 → `chainRef2va:true`（ref2va 权重 + selfAnchorVoice 跨窗锁音色，
 2026-09-23 tonghuashun 定）；声线无关、只要视觉身份 → `chainRef2va:false`（fl2va@8，
 身份保持更好，但 fl2va 只经文本编码器捎带参考，声音锚不绑音色）。
@@ -66,6 +74,7 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
 | 局部改写 | `<h3r:Retake>` | 窗口 ≤15.2s | 成品小修，不动其余画面 |
 | 动作跟随 | `<h3ctl:ControlVideo>` | 6–15s | 姿态/深度严格跟随（**未做 GPU 实测**） |
 | 成品高清化 1080P | `<h3up:UpscaleVideo>` | gan 任意 / seedvr2 ≤45s | 成片后处理超分，双档（2026-09-24 实测） |
+| LTX-2.5 单镜头音画联合 | `<ltx:GenVideo>` | 4–10s | 音画同期单镜头（产品 B-roll/氛围空镜/多镜头小叙事）；官方档默认已通冒烟，uncensored 档 DiT 在途（2026-10-01） |
 
 按场景推荐（本项目实测结论）：
 
@@ -78,7 +87,9 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
 - **多镜叙事长片（16–90s）**：`<h3c:TakeVideo>`。要人物一致性就带参考图（走无缝链）；纯场景演化
   不带参考（走无限窗，无镜头边界）。Profile 可 `chainEngine` 强制指定，默认 auto。
 - **单镜头 ≤15s**：无参考 `<h3:TextVideo>`；有首尾帧用 `<h3:FrameVideo>`（帧引导模式下
-  aspectRatio 禁用，继承引导图比例）。
+  aspectRatio 禁用，继承引导图比例）。**4–10s 且要音画同期/产品 B-roll** 走 `<ltx:GenVideo>`
+  （LTX-2.5，音轨与画面一次生成，`prompts/ltx25/` 有带货预制模板；画幅 1280×768/768×1280、
+  帧数 8k+1、无参考无声音锚——身份/声线跟随仍回 H3，契约见 `.zcode/skills/ltx-video`）。
 - **成品微调**：`<h3r:Retake>`（`video` 保声音重渲画面 / `audio` 保画面只重做声音）。
   源视频全帧载入内存：30s 源 ≈8GB 可行，61s 源 16.6GB 会 OOM——长源先 `ffmpeg -t 30 -c copy` 裁剪。
 - **成品交付 1080P**：`<h3up:UpscaleVideo source={take.video} lane=... model=... fit=...>`（2026-09-24
@@ -105,6 +116,19 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
   人物复述里写明「她的声音与参考音频音色完全一致：〈音色白描〉」（对照实测音色极佳的
   ref2va 单镜头提示词模式「exactly the same voice as in &lt;Audio 1&gt;」）。只挂 wav 不写文案，
   音色克隆会向默认嗓音漂移。
+- **台词必须用官方 `<d>` 格式，每窗必带 `overall_soundscape`（2026-09-26 babble 根因）**：
+  台词一律 `(S1) says: &lt;d&gt;[Chinese] 原文逐字&lt;/d&gt;`（说话人/音色/语气在 `<d>` 外，原文
+  逐字在内），无配乐写 `non_diegetic_music: N/A`，动作窗用 soundscape 把非语言声（呼吸/
+  笑声/底噪）显式指定并加 "No other voices"。**台词未标记时音频分支会自己编语音填满窗口**
+  （mesugaki 16s v2 全片 babble 实锤；台词越稀越必须标记）。完整契约见
+  [.zcode/skills/h3-av-contract/SKILL.md](.zcode/skills/h3-av-contract/SKILL.md)。
+- **链式窗间衔接禁止"静持约两秒"写法（2026-09-26 姿态锁死根因）**：必须写成**连续动作桥**
+  （"笑意还没收，她顺势退开半步…"）——上一窗收尾是下一窗动作的起因，不是静帧；CFG=1 下
+  否定句反噬，镜头稳定感用正写（"one single continuous shot, no cuts"）表达。
+- **链式窗数 = 音频接缝数 + 节拍漂移成本**：6 窗实测动作洗牌（V 手势提前 13s），2 窗全中。
+  能用更少窗就用更少窗；16s 是"2 窗零浪费"定点（duration≥16、单窗≤362f 的硬边界），
+  更短/单窗请求物理不可行，直接告知用户。渲染后接缝质量必须过
+  `tools/audio_seam_check.py` 三指标（click/level/voice，详见 skill §1.4）。
 - **声线兜底升级路径**（若干净锚+音色文案后仍不像）：chainTurbo:false 走 20 步官方质量档
   （"音色极佳"实测配方）；仍不行换 3×`h3:ReferenceVideo` 挂视频参考（原声自动跟随，
   唯一经用户验收的音色路径），代价是失去链式跨窗连续性且画幅跟随参考视频需处理。
@@ -142,9 +166,11 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
 1. `hypit check` 通过 → §2 确认卡片 → 用户放行
 2. `hypit build --follow` 跟踪（队列位置会显示在进度里；单卡排队数小时是正常的）
 3. 导出后**必须跑** `bash tools/verify_output.sh <out.mp4> --expect-script <新台词文本>`：
-   规格/时长/无水印残留/静音节拍/转写逐行核对，结果报告给用户
-4. 关键节拍抽帧出 QC 网格（ffmpeg tile）供人工目检；身份一致性/表演质量需人眼验收，
-   不要宣称"验证通过"超出工具能证明的范围
+   规格/时长/无水印残留/静音节拍/转写逐行核对，结果报告给用户；**多窗链式必跑**
+   `python3 tools/audio_seam_check.py <out.mp4> --seam <接缝秒>... --budget <脚本语音秒数>`
+   （接缝三指标 + 模型加词审计，接缝全 PASS 才交付）
+4. 关键节拍抽帧出 QC 网格 + **1fps 全片连拍**（查切镜/字幕条/身份漂移/节拍顺序）供人工
+   目检；身份一致性/表演质量需人眼验收，不要宣称"验证通过"超出工具能证明的范围
 5. Retake 改写不满意时可整窗重来；Retake 内存上限见 §3
 
 ## 6. 目录与产物约定
@@ -162,6 +188,9 @@ Turbo 全流程默认已定型：refTurbo 8 步 + SolAttn 动作优先档。链�
 | 资源 | 何时用 |
 | --- | --- |
 | `.zcode/skills/video-rewrite/SKILL.md` | 源视频换台词/保人物/保声线/去水印的完整契约（本仓库内） |
+| `.zcode/skills/h3-av-contract/SKILL.md` | **写/审任何 H3 提示词前必读**：`<d>` 台词格式、声景字段、接缝验证、窗数决策、窗间衔接写法（2026-09-26 babble 与动作洗牌事故的完整契约） |
+| `.zcode/skills/promote-goods/SKILL.md` | 电商带货短视频产品（2026-09-27）：商品页 URL → 采集净化 → 合规双闸（`check_compliance.py`，禁价格/时间/产地/功效/配料表/极限词）→ 9:16 竖屏口播脚本 → 生成验证后期 |
+| `.zcode/skills/ltx-video/SKILL.md` | **写/审 LTX-2.5 提示词或跑 `<ltx:GenVideo>` 前必读**：64px 画幅格网、8k+1 帧格网、两段式采样预设、[VISUAL]/[SPEECH]/[SOUNDS] 模板、unscored 反模式、与 H3 选型边界（2026-10-01） |
 | 用户级技能 `h3-prompt-writing` | 写 H3 提示词结构（T2VA/I2VA/FL2VA/L2VA/Ref2VA、声音景观等） |
 | 用户级技能 `hypit` | SVML/SVS/SVRun 语法与 Runtime/凭据问题 |
 | [packages/model-h3-chain/README.md](packages/model-h3-chain/README.md) | 链式合约、双引擎路由、脚本写法实测规则（PROMPTING.md） |

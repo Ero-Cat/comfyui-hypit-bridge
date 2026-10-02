@@ -40,7 +40,7 @@
  },
  "128": {
   "inputs": {
-   "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "clip_name": "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
    "type": "minimax",
    "device": "default"
   },
@@ -198,7 +198,7 @@
   "class_type": "BasicScheduler",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "scheduler": "beta",
@@ -210,7 +210,7 @@
   "class_type": "BasicGuider",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "conditioning": [
@@ -372,7 +372,7 @@
   "class_type": "BasicScheduler",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "scheduler": "beta",
@@ -384,7 +384,7 @@
   "class_type": "BasicGuider",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "conditioning": [
@@ -546,7 +546,7 @@
   "class_type": "BasicScheduler",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "scheduler": "beta",
@@ -558,7 +558,7 @@
   "class_type": "BasicGuider",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "conditioning": [
@@ -720,7 +720,7 @@
   "class_type": "BasicScheduler",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "scheduler": "beta",
@@ -732,7 +732,7 @@
   "class_type": "BasicGuider",
   "inputs": {
    "model": [
-    "153",
+    "easy_cache",
     0
    ],
    "conditioning": [
@@ -854,6 +854,19 @@
    "empty_cache": true,
    "gc_collect": true,
    "unload_all_models": true
+  }
+ },
+ "easy_cache": {
+  "class_type": "EasyCache",
+  "inputs": {
+   "model": [
+    "153",
+    0
+   ],
+   "reuse_threshold": 0.2,
+   "start_percent": 0.15,
+   "end_percent": 0.95,
+   "verbose": false
   }
  }
 }

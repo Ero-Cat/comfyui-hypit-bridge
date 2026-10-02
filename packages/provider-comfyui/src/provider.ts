@@ -20,6 +20,7 @@ export const chainCapability = { module: { name: "@local/h3-chain", version: "1"
 export const retakeCapability = { module: { name: "@local/h3-retake", version: "1" }, name: "h3-retake" } as const;
 export const controlCapability = { module: { name: "@local/h3-control", version: "1" }, name: "h3-control" } as const;
 export const upscaleCapability = { module: { name: "@local/h3-upscale", version: "1" }, name: "h3-upscale" } as const;
+export const ltxCapability = { module: { name: "@local/ltx-video", version: "1" }, name: "ltx-video" } as const;
 
 // Every authored port has a declared field; referenceVideo has no node input anywhere in this
 // deployment, so supports() refuses it explicitly instead of letting a mapping drop it silently.
@@ -81,16 +82,28 @@ export const upscaleMapping: GenerationWireMapping = {
     fit: { as: "value", field: "fit" },
   },
 };
+export const ltxMapping: GenerationWireMapping = {
+  capability: ltxCapability, result: "video", routes: [{ model: "ltx-video" }],
+  fields: {
+    prompt: { as: "value", field: "prompt" },
+    duration: { as: "value", field: "duration" },
+    resolution: { as: "value", field: "resolution" },
+    aspectRatio: { as: "value", field: "aspectRatio" },
+    firstFrame: { as: "url", field: "firstFrame" },
+  },
+};
 
 /**
  * Verified defaults (ComfyUI 0.36+, RTX 5090 32 GB reference):
- * FL2VA int8-convrot weights, the fl2v turbo 8-step LoRA, SolAttn patch defaults, euler/beta.
+ * FL2VA int8-convrot weights, the fl2v turbo 8-step LoRA, SolAttn patch defaults, euler/beta,
+ * the native EasyCache step cache (2026-09-28: applied on every H3 model chain, outermost after
+ * SolAttn; the old awq text encoder was replaced by the heretic nvfp4 variant the same day).
  * Every value is overridable through the Endpoint config in the Runtime Profile.
  */
 export const comfyuiDefaults = {
   unetName: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
   loraName: "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
-  clipName: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+  clipName: "qwen3vl_32b_heretic_minimax_h3_nvfp4.safetensors",
   videoVaeName: "minimax_h3_video_vae_int8_convrot.safetensors",
   audioVaeName: "minimax_h3_audio_vae_fp32.safetensors",
   steps: 8,
@@ -99,6 +112,11 @@ export const comfyuiDefaults = {
   filenamePrefix: "H3Hypit",
   crf: 20,
   useSolAttn: true,
+  // Native EasyCache (comfy_extras/nodes_easycache): adaptively reuses a sampling step when the
+  // predicted output drift stays under reuse_threshold — ~20% faster on the 8-step turbo path,
+  // more on the 20-step quality path. Skip-aware only; SeedVR2 upscale (1 step) never engages.
+  useEasyCache: false, useSpectrum: false,
+  easyCacheThreshold: 0.2,
   concurrency: 1,
   pollIntervalMs: 5_000,
   chainEngine: "auto",
@@ -146,6 +164,17 @@ export const comfyuiDefaults = {
   upscaleFramesPerBatch: 16,
   upscaleCrf: 16,
   upscalePrefix: "H3Upscale",
+  // LTX-2.5 joint A/V lane (2026-10-01 install): the ChrisColeTech uncensored v1.1 split pack —
+  // fp8_scaled 22B DiT (Eros10 + DMD distill + official IC-LoRA + Img2Vid adapter baked in) with
+  // the matching uncensored Gemma-4 12B int8 encoder and VAEs, driven through the
+  // ComfyUI-GGUF-Loader pack's LTXV25* nodes. Swap ltxUnetName/ltxClipName for the official
+  // Lightricks int8-convrot files (gated repo, HF token) once those are installed.
+  ltxUnetName: "ltx25_uncensored_v1.1-fp8_scaled.safetensors",
+  ltxClipName: "gemma4_12b_ltx25_uncensored-int8.safetensors",
+  ltxVideoVaeName: "ltx25_uncensored_video_vae.safetensors",
+  ltxAudioVaeName: "ltx25_uncensored_audio_vae.safetensors",
+  ltxUpscalerName: "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+  ltxPrefix: "LTX25",
 } as const;
 
 const FRAME_FPS = 24;
@@ -167,6 +196,28 @@ const INFINITE_WINDOW_FRAMES = 243;
 const INFINITE_OVERLAP_FRAMES = 34;
 const INFINITE_MIN_WINDOWS = 2;
 const INFINITE_MAX_WINDOWS = 10;
+
+// ── LTX-2.5 lane geometry ─────────────────────────────────────────────────────
+// One A/V generation on the 8k+1 pixel-frame grid at 24 fps (the video VAE compresses 8:1 in time
+// with a causal first frame); 97 frames ≈ 4.0 s … 241 ≈ 10.0 s.
+const LTX_MIN_DURATION_SECONDS = 4;
+const LTX_MAX_DURATION_SECONDS = 10;
+const LTX_MIN_GRID_FRAMES = 97;
+const LTX_MAX_GRID_FRAMES = 241;
+// Both edges divisible by 64 so the official half-resolution stage-1 latent lands on the /32 grid
+// exactly (1280×768 ⇄ 640×384 → 20×12 latent); 720 would floor to 11 and break the x2 round trip.
+const LTX_ASPECT_BOXES: Readonly<Record<string, readonly [number, number]>> = {
+  "16:9": [1280, 768],
+  "9:16": [768, 1280],
+};
+const LTX_DEFAULT_ASPECT_RATIO = "16:9";
+
+/** LTX frame counts live on an 8k+1 grid; snap requested seconds up to the next grid point. */
+function ltxGridFrames(durationSeconds: number): number {
+  const raw = Math.max(1, Math.round(durationSeconds * FRAME_FPS));
+  const k = Math.ceil((raw - 1) / 8);
+  return Math.min(LTX_MAX_GRID_FRAMES, Math.max(LTX_MIN_GRID_FRAMES, 8 * k + 1));
+}
 
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected ComfyUI response object");
@@ -421,6 +472,7 @@ type ComfyGraph = Record<string, ComfyNode>;
 type GenerationSettings = {
   unetName: string; loraName: string; clipName: string; videoVaeName: string; audioVaeName: string;
   steps: number; sampler: string; scheduler: string; useSolAttn: boolean; filenamePrefix: string; crf: number;
+  useEasyCache: boolean; easyCacheThreshold: number; useSpectrum: boolean;
   refUnetName: string; refLoraName: string; refTurbo: boolean; refTurboSteps: number; refSteps: number; refSampler: string; refScheduler: string; refSolAttn: boolean; refSolAttnTau: number; refSolAttnStart: number; refSolAttnEnd: number; refSolAttnInt8Pv: boolean;
   controlPatchName: string;
   allowAuto2K: boolean;
@@ -435,6 +487,12 @@ type GenerationSettings = {
   upscaleFramesPerBatch: number;
   upscaleCrf: number;
   upscalePrefix: string;
+  ltxUnetName: string;
+  ltxClipName: string;
+  ltxVideoVaeName: string;
+  ltxAudioVaeName: string;
+  ltxUpscalerName: string;
+  ltxPrefix: string;
 };
 
 /** The standard fl2va model chain used by single-take, chain and retake graphs. */
@@ -467,6 +525,30 @@ function modelChainNodes(settings: GenerationSettings,
       },
     };
     modelSource = ["sol_attn", 0];
+  }
+  // EasyCache sits outermost (community H3 order UNET → LoRA → SolAttn → EasyCache) so the cache
+  // sees the patched model's full forward; start/end defaults keep the first and last steps dense.
+  // 2026-09-28 user verdict: EasyCache degraded event causality (capped jug still pouring,
+  // scene morphing across pans) — ship OFF by default; Spectrum (H3SpeedBoosters wrapper,
+  // fills SpectrumApplyMiniMaxH3 defaults) is the tested alternative, also OFF unless opted in.
+  if (settings.useSpectrum) {
+    graph.speed_booster = {
+      class_type: "H3SpeedBoosters", inputs: {
+        model: modelSource,
+        spectrum: true, teacache: false, teacache_strength: 0.15,
+        blockcache: false, blockcache_threshold: 0.12, easycache: false,
+      },
+    };
+    modelSource = ["speed_booster", 0];
+  }
+  if (settings.useEasyCache) {
+    graph.easy_cache = {
+      class_type: "EasyCache", inputs: {
+        model: modelSource, reuse_threshold: settings.easyCacheThreshold,
+        start_percent: 0.15, end_percent: 0.95, verbose: false,
+      },
+    };
+    modelSource = ["easy_cache", 0];
   }
   return { graph, model: modelSource, clip: ["clip", 0], videoVae: ["video_vae", 0], audioVae: ["audio_vae", 0] };
 }
@@ -809,6 +891,64 @@ function buildControlGraph(args: {
   return graph;
 }
 
+/**
+ * The LTX-2.5 official two-stage recipe through the ComfyUI-GGUF-Loader pack's LTXV25* nodes:
+ * one loader for the whole kit (DiT + Gemma-4 encoder-with-projection + both VAEs), prep builds
+ * the stage-1 latent at HALF the target resolution, the distilled schedule samples it (8 steps,
+ * fixed sigmas, dual CFG 1), the official spatial x2 latent upscaler doubles it back (re-holding
+ * the first frame at 1.0 for i2v), the refine schedule sharpens it (3 steps), and one AV decode
+ * node muxes picture + synced audio into a VIDEO. The schedules are node presets, not step
+ * counts — the distilled bake only looks right on its own sigma curve.
+ */
+function buildLtxGraph(args: {
+  prompt: string; width: number; height: number; frames: number; seed: number;
+  firstFrame?: string;
+}, settings: GenerationSettings): ComfyGraph {
+  const graph: ComfyGraph = {
+    models: { class_type: "LTXV25ModelsLoader", inputs: {
+      unet_name: settings.ltxUnetName, clip_name: settings.ltxClipName,
+      video_vae_name: settings.ltxVideoVaeName, audio_vae_name: settings.ltxAudioVaeName,
+    } },
+    upscaler: { class_type: "LatentUpscaleModelLoader", inputs: { model_name: settings.ltxUpscalerName } },
+  };
+  const prepInputs: Record<string, unknown> = {
+    model: ["models", 0], clip: ["models", 1], mode: args.firstFrame !== undefined ? "i2v" : "t2v",
+    vae: ["models", 2], audio_vae: ["models", 3],
+    prompt: args.prompt, negative_prompt: "",
+    width: args.width, height: args.height, length: args.frames,
+    frame_rate: FRAME_FPS, batch_size: 1,
+  };
+  if (args.firstFrame !== undefined) {
+    // The prep node center-crops and resizes the raw image to the stage-1 grid itself; no scaling
+    // node upstream, and the SAME load feeds the upscale node's refine re-hold.
+    graph.first_frame = { class_type: "LoadImage", inputs: { image: args.firstFrame } };
+    prepInputs.images = ["first_frame", 0];
+  }
+  graph.prep = { class_type: "LTXV25ImgToVideo", inputs: prepInputs };
+  graph.sample_distilled = { class_type: "LTXV25KSampler", inputs: {
+    model: ["prep", 0], positive: ["prep", 1], negative: ["prep", 2], latent_image: ["prep", 3],
+    seed: args.seed, schedule: "distilled (8 steps)", sampler_name: "euler_ancestral",
+    video_cfg: 1, audio_cfg: 1,
+  } };
+  const upscaleInputs: Record<string, unknown> = {
+    latent: ["sample_distilled", 0], upscale_model: ["upscaler", 0], vae: ["models", 2],
+  };
+  if (args.firstFrame !== undefined) upscaleInputs.images = ["first_frame", 0];
+  graph.upscale = { class_type: "LTXV25LatentUpscale", inputs: upscaleInputs };
+  graph.sample_refine = { class_type: "LTXV25KSampler", inputs: {
+    model: ["prep", 0], positive: ["prep", 1], negative: ["prep", 2], latent_image: ["upscale", 0],
+    seed: args.seed, schedule: "refine (3 steps)", sampler_name: "euler_ancestral",
+    video_cfg: 1, audio_cfg: 1,
+  } };
+  graph.decode = { class_type: "LTXV25AVDecode", inputs: {
+    latent: ["sample_refine", 0], vae: ["models", 2], audio_vae: ["models", 3], fps: FRAME_FPS,
+  } };
+  graph.output = { class_type: "SaveVideo", inputs: {
+    video: ["decode", 0], filename_prefix: settings.ltxPrefix, format: "auto", codec: "auto",
+  } };
+  return graph;
+}
+
 // GAN lane model keys → files under models/upscale_models (manifest in docs/SETUP.md).
 const UPSCALE_GAN_FILES: Readonly<Record<string, string>> = {
   "4x-ultrasharp": "4x-UltraSharp.pth",
@@ -1013,6 +1153,25 @@ function controlSupportFor(available: boolean): (request: EndpointRequest) => En
   };
 }
 
+function ltxSupport(request: EndpointRequest): EndpointSupport {
+  const ports = (request.constraints as unknown as GenerationRequest).ports;
+  const duration = ports.duration?.[0];
+  if (typeof duration === "number" && (duration < LTX_MIN_DURATION_SECONDS || duration > LTX_MAX_DURATION_SECONDS)) {
+    return { status: "unsupported", reason: `One LTX-2.5 generation spans ${LTX_MIN_DURATION_SECONDS}–${LTX_MAX_DURATION_SECONDS} seconds, not ${duration} seconds` };
+  }
+  const resolution = ports.resolution?.[0];
+  if (resolution !== undefined && resolution !== "768P") {
+    return { status: "unsupported", reason: `This deployment renders LTX-2.5 at 768P, not ${String(resolution)}` };
+  }
+  const aspect = ports.aspectRatio?.[0];
+  if (aspect !== undefined && !(String(aspect) in LTX_ASPECT_BOXES)) {
+    return { status: "unsupported", reason: `An LTX-2.5 aspect ratio is ${Object.keys(LTX_ASPECT_BOXES).join(" or ")}, not ${String(aspect)}` };
+  }
+  return mappingSupportsRequest(ltxMapping, request.constraints)
+    ? { status: "supported" }
+    : { status: "unsupported", reason: "This ComfyUI deployment does not accept one of the requested LTX inputs" };
+}
+
 type OutputFile = { filename: string; subfolder: string; type: string; format?: string };
 
 function findVideoOutput(outputs: Record<string, unknown>): OutputFile | undefined {
@@ -1061,6 +1220,8 @@ export function createComfyuiProvider(options: {
   unetName?: string | undefined; loraName?: string | undefined; clipName?: string | undefined;
   videoVaeName?: string | undefined; audioVaeName?: string | undefined;
   useSolAttn?: boolean | undefined;
+  useEasyCache?: boolean | undefined; useSpectrum?: boolean | undefined;
+  easyCacheThreshold?: number | undefined;
   chainEngine?: string | undefined;
   refUnetName?: string | undefined; refLoraName?: string | undefined; refTurbo?: boolean | undefined;
   refTurboSteps?: number | undefined;
@@ -1081,6 +1242,12 @@ export function createComfyuiProvider(options: {
   upscaleFramesPerBatch?: number | undefined;
   upscaleCrf?: number | undefined;
   upscalePrefix?: string | undefined;
+  ltxUnetName?: string | undefined;
+  ltxClipName?: string | undefined;
+  ltxVideoVaeName?: string | undefined;
+  ltxAudioVaeName?: string | undefined;
+  ltxUpscalerName?: string | undefined;
+  ltxPrefix?: string | undefined;
 }) {
   const base = address(options.baseUrl);
   const fetcher = options.fetch ?? globalThis.fetch;
@@ -1100,6 +1267,9 @@ export function createComfyuiProvider(options: {
     sampler: options.sampler ?? comfyuiDefaults.sampler,
     scheduler: options.scheduler ?? comfyuiDefaults.scheduler,
     useSolAttn: options.useSolAttn ?? comfyuiDefaults.useSolAttn,
+    useEasyCache: options.useEasyCache ?? comfyuiDefaults.useEasyCache,
+    useSpectrum: options.useSpectrum ?? comfyuiDefaults.useSpectrum,
+    easyCacheThreshold: options.easyCacheThreshold ?? comfyuiDefaults.easyCacheThreshold,
     filenamePrefix: options.filenamePrefix ?? comfyuiDefaults.filenamePrefix,
     crf: options.crf ?? comfyuiDefaults.crf,
     refUnetName: options.refUnetName !== undefined ? options.refUnetName : comfyuiDefaults.refUnetName,
@@ -1127,6 +1297,12 @@ export function createComfyuiProvider(options: {
     upscaleFramesPerBatch: options.upscaleFramesPerBatch ?? comfyuiDefaults.upscaleFramesPerBatch,
     upscaleCrf: options.upscaleCrf ?? comfyuiDefaults.upscaleCrf,
     upscalePrefix: options.upscalePrefix ?? comfyuiDefaults.upscalePrefix,
+    ltxUnetName: options.ltxUnetName ?? comfyuiDefaults.ltxUnetName,
+    ltxClipName: options.ltxClipName ?? comfyuiDefaults.ltxClipName,
+    ltxVideoVaeName: options.ltxVideoVaeName ?? comfyuiDefaults.ltxVideoVaeName,
+    ltxAudioVaeName: options.ltxAudioVaeName ?? comfyuiDefaults.ltxAudioVaeName,
+    ltxUpscalerName: options.ltxUpscalerName ?? comfyuiDefaults.ltxUpscalerName,
+    ltxPrefix: options.ltxPrefix ?? comfyuiDefaults.ltxPrefix,
   };
   const serviceSupport = serviceSupportFor(settings.refUnetName.length > 0);
   const controlSupport = controlSupportFor(settings.refUnetName.length > 0 && settings.controlPatchName.length > 0);
@@ -1667,6 +1843,56 @@ export function createComfyuiProvider(options: {
   };
   const upscaleEndpoint: AsyncEndpoint = { start: upscaleStart, ...sharedLifecycle };
 
+  const ltxStart = async (context: EndpointStartContext): Promise<EndpointOutcome> => {
+    const supported = ltxSupport(context.need);
+    if (supported.status === "unsupported") throw new Error(supported.reason);
+    const authored = context.need.constraints as unknown as GenerationRequest;
+    await context.reportProgress?.({ phase: "Preparing ComfyUI LTX-2.5 media" });
+    const { wire, uploadedDimensions } = await compileWithUploads(context, ltxMapping, authored);
+    const prompt = text(wire.prompt);
+    const duration = wire.duration === undefined ? 5 : numberValue(wire.duration);
+    const firstFrame = optionalText(wire.firstFrame);
+    // Aspect: explicit port wins; a first frame lends its own orientation; else 16:9.
+    const explicitAspect = optionalText(wire.aspectRatio);
+    const guidingImage = firstFrame !== undefined ? uploadedDimensions.get(firstFrame) : undefined;
+    const aspectRatio = explicitAspect
+      ?? (guidingImage !== undefined && guidingImage.height > guidingImage.width ? "9:16" : LTX_DEFAULT_ASPECT_RATIO);
+    const [width, height] = LTX_ASPECT_BOXES[aspectRatio] ?? LTX_ASPECT_BOXES[LTX_DEFAULT_ASPECT_RATIO]!;
+    // The whole kit must be visible to ComfyUI now; a half-finished download fails here clearly
+    // instead of as a bare validation error after the uploads.
+    const unetList = await comboOptions("LTXV25ModelsLoader", "unet_name");
+    if (!unetList.includes(settings.ltxUnetName)) {
+      throw new Error(`The LTX-2.5 DiT ${settings.ltxUnetName} is not visible to ComfyUI yet (still downloading or not installed)`);
+    }
+    const clipList = await comboOptions("LTXV25ModelsLoader", "clip_name");
+    if (!clipList.includes(settings.ltxClipName)) {
+      throw new Error(`The LTX-2.5 text encoder ${settings.ltxClipName} is not visible to ComfyUI yet (still downloading or not installed)`);
+    }
+    const videoVaeList = await comboOptions("LTXV25ModelsLoader", "video_vae_name");
+    if (!videoVaeList.includes(settings.ltxVideoVaeName)) {
+      throw new Error(`The LTX-2.5 video VAE ${settings.ltxVideoVaeName} is not visible to ComfyUI yet`);
+    }
+    const audioVaeList = await comboOptions("LTXV25ModelsLoader", "audio_vae_name");
+    if (!audioVaeList.includes(settings.ltxAudioVaeName)) {
+      throw new Error(`The LTX-2.5 audio VAE ${settings.ltxAudioVaeName} is not visible to ComfyUI yet`);
+    }
+    const upscalerList = await comboOptions("LatentUpscaleModelLoader", "model_name");
+    if (!upscalerList.includes(settings.ltxUpscalerName)) {
+      throw new Error(`The LTX-2.5 spatial upscaler ${settings.ltxUpscalerName} is not visible to ComfyUI yet`);
+    }
+    const frames = ltxGridFrames(duration);
+    await context.reportProgress?.({
+      phase: `LTX-2.5 ${firstFrame !== undefined ? "image-to-video" : "text-to-video"} ${width}×${height}, ${frames} frames (${(frames / FRAME_FPS).toFixed(1)} s, distilled 8 + refine 3) on the GPU`,
+    });
+    const graph = buildLtxGraph({
+      prompt, width, height, frames,
+      seed: Math.floor(Math.random() * 2 ** 31),
+      ...(firstFrame !== undefined ? { firstFrame } : {}),
+    }, settings);
+    return submitGraph(graph, context, "ltx-video");
+  };
+  const ltxEndpoint: AsyncEndpoint = { start: ltxStart, ...sharedLifecycle };
+
   return defineEndpointPackage({
     module: providerModule, facet: "video", instance: options.instance, pool: options.pool,
     defaultConcurrency: options.concurrency ?? comfyuiDefaults.concurrency,
@@ -1679,6 +1905,7 @@ export function createComfyuiProvider(options: {
       { capability: retakeCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: retakeSupport, endpoint: retakeEndpoint },
       { capability: controlCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: controlSupport, endpoint: controlEndpoint },
       { capability: upscaleCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: upscaleSupport, endpoint: upscaleEndpoint },
+      { capability: ltxCapability, returns: generationTypes.videoSet, lifecycle: "asynchronous", supports: ltxSupport, endpoint: ltxEndpoint },
     ],
   });
 }
